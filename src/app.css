@@ -297,3 +297,52 @@ code { background: var(--teal-tint); padding: 2px 6px; border-radius: 5px; font-
   .add-row { flex-direction: column; align-items: stretch; }
   .roster-tools { flex-direction: column; align-items: stretch; }
 }
+
+/* ============ VISUAL POLISH v2 ============ */
+/* Present / Absent status refinement */
+.status-tag { display: inline-flex; align-items: center; gap: 5px; }
+.status-tag--on { color: var(--green); background: #e6f4ee; border-color: #bfe3d2; }
+.status-tag--on::before { content:''; width: 6px; height: 6px; border-radius: 50%; background: var(--green);
+  box-shadow: 0 0 0 3px #d3ede0; }
+
+/* Row highlight for present = subtle green, not amber */
+.ledger .row-on { background: linear-gradient(90deg, #eef7f2, transparent 55%); }
+.ledger .row-on:hover { background: linear-gradient(90deg, #eef7f2, #fafcfb 55%); }
+
+/* Softer table header, roomier cells */
+.ledger thead th { background: #f7faf9; padding: 13px 18px; }
+.ledger tbody td { padding: 15px 18px; }
+.ledger tbody tr { transition: background .1s; }
+
+/* Days cell as a subtle chip */
+.days-cell { font-weight: 700; color: var(--teal-deep); }
+
+/* Team blocks: lift + rounded number emphasis */
+.team-block { transition: box-shadow .15s; }
+.team-block:hover { box-shadow: var(--shadow-lg); }
+.team-head { font-size: 15px; }
+
+/* Section head spacing */
+.section-head { margin-top: 4px; margin-bottom: 2px; }
+
+/* Sheet head cleaner */
+.sheet-head { padding: 24px 28px; }
+.platform-name--lg { font-size: 26px; letter-spacing: -.02em; }
+
+/* Cards a touch more air */
+.col { padding: 24px; }
+.tally-card { padding: 24px 26px; }
+
+/* Filters: wrap nicely, consistent height */
+.filters { gap: 10px 12px; }
+.seg-btn { padding: 8px 14px; }
+
+/* Board modal list: designation pill aligned left, spacing */
+.board-row { gap: 12px; }
+.board-row .desig { flex: 0 0 auto; min-width: 38px; text-align: center; }
+
+/* Subtle divider above footer credit */
+.footer { padding: 20px 30px; }
+
+/* Empty states softer */
+.empty.pad { color: var(--ink-faint); font-size: 14px; padding: 34px; }

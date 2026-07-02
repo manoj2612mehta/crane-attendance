@@ -157,7 +157,7 @@ function ShellApp({ session }) {
           : tab === 'dashboard' && isAdmin
             ? (openPlatform
                 ? <PlatformSheet platform={platforms.find(p=>p.id===openPlatform)} operators={operators}
-                    logs={logs} session={session} canExport reload={load} onBack={() => setOpenPlatform(null)} />
+                    logs={logs} session={session} canExport readOnly reload={load} onBack={() => setOpenPlatform(null)} />
                 : <AdminDashboard platforms={platforms} operators={operators} logs={logs} onOpen={setOpenPlatform} />)
           : (myPlatforms.length === 0
               ? <NoAssignment />
@@ -253,7 +253,7 @@ function MyPlatformsView({ myPlatforms, operators, logs, session, reload }) {
 }
 
 /* ============================================================ PLATFORM SHEET */
-function PlatformSheet({ platform, operators, logs, session, reload, onBack, canExport }) {
+function PlatformSheet({ platform, operators, logs, session, reload, onBack, canExport, readOnly }) {
   const [status, setStatus] = useState('all')
   const [range, setRange] = useState('all')
   const [from, setFrom] = useState(''), [to, setTo] = useState('')
@@ -314,7 +314,7 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
           <div className="platform-name platform-name--lg">{platform.name}</div></div>
         <div className="sheet-actions">
           {canExport && <button className="btn btn--ghost" onClick={() => setExportOpen(true)}>⭳ Monthly Excel</button>}
-          <button className="btn btn--primary" onClick={() => setBoarding(true)}>+ Board</button>
+          {!readOnly && <button className="btn btn--primary" onClick={() => setBoarding(true)}>+ Board</button>}
         </div>
       </div>
 
@@ -331,7 +331,7 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
         <div className="seg">
           {['all','onboard','deboarded'].map(s => (
             <button key={s} className={status===s?'seg-btn is-on':'seg-btn'} onClick={()=>setStatus(s)}>
-              {s==='all'?'All':s==='onboard'?'Onboard':'Deboarded'}</button>))}
+              {s==='all'?'All':s==='onboard'?'Present':'Absent'}</button>))}
         </div>
         <div className="seg">
           {[['all','All roles'],['CO','CO'],['CT','CT'],['SUP','SUP']].map(([v,l]) => (
@@ -366,8 +366,8 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
                       <td className="tnum">{fmtDate(l.boarded_at)}</td>
                       <td className="tnum">{fmtDate(l.deboarded_at)}</td>
                       <td className="ta-r tnum days-cell">{tripDays(l.boarded_at,l.deboarded_at)}</td>
-                      <td>{onboard?<span className="status-tag status-tag--on">Onboard</span>:<span className="status-tag">Deboarded</span>}</td>
-                      <td className="ta-r">{onboard && <button className="btn btn--deboard-sm" onClick={() => setDeboardLog(l)}>Deboard</button>}</td>
+                      <td>{onboard?<span className="status-tag status-tag--on">Present</span>:<span className="status-tag">Absent</span>}</td>
+                      <td className="ta-r">{onboard && !readOnly && <button className="btn btn--deboard-sm" onClick={() => setDeboardLog(l)}>Deboard</button>}</td>
                     </tr>)
                 })}
           </tbody>
@@ -509,17 +509,16 @@ function PersonnelTab({ operators, logs, reload }) {
 
   const add = async () => {
     setErr('')
-    if (!emp.trim() || !name.trim() || !desig) { setErr('Emp code, name and designation are required.'); return }
+    if (!name.trim() || !desig || !ned.trim()) { setErr('Name, designation and NED pass are required.'); return }
     setBusy(true)
     const { error } = await supabase.from('operators').insert({
-      emp_code: emp.trim(), full_name: name.trim(), designation: desig,
-      ned_pass_no: ned.trim() || null, phone: phone.trim() || null })
+      emp_code: emp.trim() || null, full_name: name.trim(), designation: desig,
+      ned_pass_no: ned.trim(), phone: phone.trim() || null })
     setBusy(false)
     if (error) {
       const m = error.message.toLowerCase()
-      setErr(m.includes('emp_code') || m.includes('duplicate key') && m.includes('emp')
-        ? 'This employee code already exists.'
-        : m.includes('ned') ? 'This NED pass number already exists.'
+      setErr(m.includes('ned') ? 'This NED pass number already exists.'
+        : (m.includes('emp_code') || (m.includes('duplicate') && m.includes('emp'))) ? 'This employee code already exists.'
         : m.includes('duplicate') ? 'This person already exists.' : error.message)
       return
     }
@@ -540,7 +539,7 @@ function PersonnelTab({ operators, logs, reload }) {
       <td className="tnum muted">{o.emp_code}</td>
       <td className="tnum muted">{o.ned_pass_no||'—'}</td>
       <td className="muted">{o.phone||'—'}</td>
-      <td>{onboardIds.has(o.id)?<span className="status-tag status-tag--on">Onboard</span>:<span className="status-tag">Ashore</span>}</td>
+      <td>{onboardIds.has(o.id)?<span className="status-tag status-tag--on">Present</span>:<span className="status-tag">Absent</span>}</td>
     </tr>
   ))
 
@@ -549,7 +548,7 @@ function PersonnelTab({ operators, logs, reload }) {
       <div className="col">
         <div className="col-head">Add crane team personnel</div>
         <div className="add-op__grid add-op__grid--5">
-          <label className="field"><span>Emp code</span>
+          <label className="field"><span>Emp code <em>(optional)</em></span>
             <input value={emp} onChange={e=>setEmp(e.target.value)} placeholder="ONG-4471" /></label>
           <label className="field"><span>Full name</span>
             <input value={name} onChange={e=>setName(e.target.value)} placeholder="Ramesh Yadav" /></label>
@@ -557,7 +556,7 @@ function PersonnelTab({ operators, logs, reload }) {
             <select value={desig} onChange={e=>setDesig(e.target.value)}>
               <option value="">Select…</option>
               {DESIGS.map(d=><option key={d.code} value={d.code}>{d.code} · {d.label}</option>)}</select></label>
-          <label className="field"><span>NED pass <em>(optional)</em></span>
+          <label className="field"><span>NED pass</span>
             <input value={ned} onChange={e=>setNed(e.target.value)} placeholder="NED-0093" /></label>
           <label className="field"><span>Phone <em>(optional)</em></span>
             <input value={phone} onChange={e=>setPhone(e.target.value)} onKeyDown={e=>e.key==='Enter'&&add()} placeholder="+91 …" /></label>

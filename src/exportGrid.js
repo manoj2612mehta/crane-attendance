@@ -70,7 +70,7 @@ export function exportMonthlyGrid({ platform, operators, logs, year, month /* 0-
         const day = new Date(year, month, d)
         const present = presentOn(day, opLogs)
         if (present) total++
-        row.push(present ? '✓' : '')
+        row.push(present ? '✓' : '✗')
       }
       row.push(total)
       aoa.push(row)
