@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { supabase, hasConfig } from './supabaseClient'
 import { exportMonthlyGrid } from './exportGrid'
+import HelpGuide from './HelpGuide'
 import './app.css'
 
 /* ============================================================ DATE HELPERS */
@@ -68,6 +69,7 @@ function Splash() { return <div className="center-screen"><div className="pulse-
 function Login() {
   const [email, setEmail] = useState(''), [pass, setPass] = useState('')
   const [err, setErr] = useState(''), [busy, setBusy] = useState(false)
+  const [help, setHelp] = useState(false)
   const submit = async () => {
     setErr(''); setBusy(true)
     const { error } = await supabase.auth.signInWithPassword({ email, password: pass })
@@ -75,6 +77,7 @@ function Login() {
   }
   return (
     <div className="login-shell"><Brand pos="top" />
+      <button className="help-fab" onClick={() => setHelp(true)}>? Help &amp; Guide</button>
       <div className="login-grid">
         <div className="login-hero"><div className="beacon" />
           <img src="/ongc-logo.png" alt="ONGC" className="ongc-logo ongc-logo--hero" />
@@ -93,6 +96,7 @@ function Login() {
           <button className="btn btn--primary btn--full" disabled={busy} onClick={submit}>{busy?'Signing in…':'Sign in'}</button>
         </div>
       </div><Brand pos="bottom" />
+      {help && <HelpGuide onClose={() => setHelp(false)} loggedIn={false} />}
     </div>
   )
 }
@@ -107,6 +111,7 @@ function ShellApp({ session }) {
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState(null)
   const [openPlatform, setOpenPlatform] = useState(null)
+  const [help, setHelp] = useState(false)
 
   const load = useCallback(async () => {
     const [{ data: p }, { data: o }, { data: l }, { data: inch }] = await Promise.all([
@@ -138,6 +143,7 @@ function ShellApp({ session }) {
         <Logo />
         <div className="topbar__right"><Brand pos="top" />
           <div className="acct"><span className="whoami">{session.user.email}{isAdmin?' · Admin':''}</span>
+            <button className="btn btn--ghost" onClick={() => setHelp(true)}>? Help</button>
             <button className="btn btn--ghost" onClick={() => supabase.auth.signOut()}>Sign out</button></div>
         </div>
       </header>
@@ -172,6 +178,7 @@ function ShellApp({ session }) {
       </main>
 
       <footer className="footer"><span>Crane Operator Attendance · ONGC Offshore Operations</span><Brand pos="footer" /></footer>
+      {help && <HelpGuide onClose={() => setHelp(false)} loggedIn={true} />}
     </div>
   )
 }
