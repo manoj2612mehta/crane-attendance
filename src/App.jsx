@@ -158,7 +158,7 @@ function ShellApp({ session }) {
           tab === 'verifier'
             ? <VerifierTab operators={operators} logs={logs} platforms={platforms} />
           : tab === 'personnel'
-            ? <PersonnelTab operators={operators} logs={logs} reload={load} isAdmin={isAdmin} />
+            ? <PersonnelTab operators={operators} logs={logs} reload={load} isAdmin={isAdmin} platforms={platforms} />
           : tab === 'dashboard' && isAdmin
             ? (openPlatform
                 ? <PlatformSheet platform={platforms.find(p=>p.id===openPlatform)} operators={operators}
@@ -315,10 +315,10 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
     if (error) alert(error.message.includes('one_open_trip') ? 'This person is already onboard somewhere. Deboard them first.' : error.message)
     setBoarding(false); reload()
   }
-  const doBoardDNF = async ({ name, ned }, ymd) => {
+  const doBoardDNF = async ({ name, ned, desig }, ymd) => {
     // create a DNF operator, then board them
     const { data, error } = await supabase.from('operators').insert({
-      full_name: name.trim(), ned_pass_no: ned.trim(), designation: 'CO', is_dnf: true })
+      full_name: name.trim(), ned_pass_no: ned.trim(), designation: desig || 'CO', is_dnf: true })
       .select().single()
     if (error) {
       alert(error.message.toLowerCase().includes('ned') ? 'A person with this NED pass already exists in the master. Board them from the list instead.' : error.message)
@@ -435,7 +435,7 @@ function BoardModal({ platform, operators, logs, onClose, onBoard, onBoardDNF })
   const [q, setQ] = useState('')
   const [opId, setOpId] = useState('')
   const [ymd, setYmd] = useState(todayISO())
-  const [dnfName, setDnfName] = useState(''), [dnfNed, setDnfNed] = useState('')
+  const [dnfName, setDnfName] = useState(''), [dnfNed, setDnfNed] = useState(''), [dnfDesig, setDnfDesig] = useState('')
 
   const available = operators.filter(o => !onboardAnywhere.has(o.id))
     .filter(o => desigF==='all' || o.designation===desigF)
@@ -479,6 +479,10 @@ function BoardModal({ platform, operators, logs, onClose, onBoard, onBoardDNF })
             <label className="field"><span>NED pass no</span>
               <input value={dnfNed} onChange={e=>setDnfNed(e.target.value)} placeholder="NED number" /></label>
           </div>
+          <label className="field"><span>Designation</span>
+            <select value={dnfDesig} onChange={e=>setDnfDesig(e.target.value)}>
+              <option value="">Select…</option>
+              {DESIGS.map(d=><option key={d.code} value={d.code}>{d.code} · {d.label}</option>)}</select></label>
         </>}
 
         <label className="field field--inline"><span>Boarding date</span>
@@ -487,8 +491,8 @@ function BoardModal({ platform, operators, logs, onClose, onBoard, onBoardDNF })
           <button className="btn btn--ghost" onClick={onClose}>Cancel</button>
           {mode==='list'
             ? <button className="btn btn--primary" disabled={!opId} onClick={()=>onBoard(opId, ymd)}>Board</button>
-            : <button className="btn btn--primary" disabled={!dnfName.trim()||!dnfNed.trim()}
-                onClick={()=>onBoardDNF({ name: dnfName, ned: dnfNed }, ymd)}>Board as DNF</button>}
+            : <button className="btn btn--primary" disabled={!dnfName.trim()||!dnfNed.trim()||!dnfDesig}
+                onClick={()=>onBoardDNF({ name: dnfName, ned: dnfNed, desig: dnfDesig }, ymd)}>Board as DNF</button>}
         </div>
       </div>
     </div>
@@ -548,7 +552,7 @@ function ExportModal({ platform, operators, logs, onClose }) {
 }
 
 /* ============================================================ PERSONNEL TAB */
-function PersonnelTab({ operators, logs, reload, isAdmin }) {
+function PersonnelTab({ operators, logs, reload, isAdmin, platforms }) {
   const [emp, setEmp] = useState(''), [name, setName] = useState('')
   const [desig, setDesig] = useState(''), [ned, setNed] = useState(''), [phone, setPhone] = useState('')
   const [busy, setBusy] = useState(false), [err, setErr] = useState('')
@@ -556,6 +560,7 @@ function PersonnelTab({ operators, logs, reload, isAdmin }) {
   const [importMsg, setImportMsg] = useState('')
   const [editDnf, setEditDnf] = useState(null)
   const onboardIds = new Set(logs.filter(l => !l.deboarded_at).map(l => l.operator_id))
+  const pById = Object.fromEntries((platforms||[]).map(p => [p.id, p]))
 
   const dnfPeople = operators.filter(o => o.is_dnf)
 
@@ -628,14 +633,23 @@ function PersonnelTab({ operators, logs, reload, isAdmin }) {
           <p className="muted small" style={{marginTop:'-8px',marginBottom:'14px'}}>
             These were boarded by ICM without master details. Review, complete the details, and approve to move them into the master roster.</p>
           <div className="table-wrap"><table className="ledger">
-            <thead><tr><th>Name</th><th>NED</th><th>Boarded via</th><th></th></tr></thead>
-            <tbody>{dnfPeople.map(o => (
-              <tr key={o.id}>
-                <td className="op-name">{o.full_name}<span className="dnf-badge">DNF</span></td>
-                <td className="tnum muted">{o.ned_pass_no}</td>
-                <td className="muted">{onboardIds.has(o.id)?'Currently onboard':'Deboarded'}</td>
-                <td className="ta-r"><button className="btn btn--primary btn--xs" onClick={()=>setEditDnf(o)}>Review &amp; approve</button></td>
-              </tr>))}</tbody>
+            <thead><tr><th>Name</th><th>Desig</th><th>NED</th><th>Platform</th><th>Status</th><th></th></tr></thead>
+            <tbody>{dnfPeople.map(o => {
+              const openLog = logs.find(l => l.operator_id === o.id && !l.deboarded_at)
+              const lastLog = logs.filter(l => l.operator_id === o.id)
+                .sort((a,b)=>new Date(b.boarded_at)-new Date(a.boarded_at))[0]
+              const refLog = openLog || lastLog
+              const platCode = refLog ? (pById[refLog.platform_id]?.code || '—') : '—'
+              return (
+                <tr key={o.id}>
+                  <td className="op-name">{o.full_name}<span className="dnf-badge">DNF</span></td>
+                  <td><span className={`desig desig--${o.designation}`}>{o.designation}</span></td>
+                  <td className="tnum muted">{o.ned_pass_no}</td>
+                  <td className="tnum">{platCode}</td>
+                  <td className="muted">{openLog?'Currently onboard':'Deboarded'}</td>
+                  <td className="ta-r"><button className="btn btn--primary btn--xs" onClick={()=>setEditDnf(o)}>Review &amp; approve</button></td>
+                </tr>)
+            })}</tbody>
           </table></div>
         </div>
       )}
