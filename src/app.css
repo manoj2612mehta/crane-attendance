@@ -346,3 +346,32 @@ code { background: var(--teal-tint); padding: 2px 6px; border-radius: 5px; font-
 
 /* Empty states softer */
 .empty.pad { color: var(--ink-faint); font-size: 14px; padding: 34px; }
+
+/* ============ OVERSTAY (onboard > 28 days) ============ */
+.ledger .row-over { background: linear-gradient(90deg, #fdecec, transparent 55%); }
+.ledger .row-over:hover { background: linear-gradient(90deg, #fbe0e0, #fafcfb 55%); }
+.ledger .row-over .days-cell { color: var(--red); }
+.over-flag { display: inline-flex; align-items: center; justify-content: center; margin-left: 6px;
+  width: 16px; height: 16px; border-radius: 50%; background: var(--red); color:#fff; font-size: 11px; font-weight: 700; }
+
+/* ============ VERIFIER ============ */
+.verify-list { display: flex; flex-direction: column; gap: 12px; }
+.verify-card { display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 12px; padding: 16px 20px; }
+.verify-card--eligible { border-left-color: var(--green); background: #f2faf6; }
+.verify-card--resting { border-left-color: var(--red); background: #fdf1f1; }
+.verify-card--onboard { border-left-color: var(--amber); background: var(--amber-soft); }
+.verify-card--never, .verify-card--neutral { border-left-color: var(--ink-faint); }
+.verify-name { font-family:'Space Grotesk'; font-weight: 600; font-size: 16px; display: flex; align-items: center; gap: 10px; }
+.verify-body { text-align: right; }
+.verify-badge { font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 8px; display: inline-block; }
+.vb-eligible { background: #d9f0e4; color: #1c6b4a; }
+.vb-resting { background: #f8d4d4; color: #9a2a2a; }
+.vb-onboard { background: #f5dfbd; color: #7a4a12; }
+.vb-neutral { background: var(--paper); color: var(--ink-soft); border: 1px solid var(--line); }
+.verify-note { font-size: 12.5px; color: var(--ink-soft); margin-top: 6px; }
+
+@media (max-width: 640px) {
+  .verify-card { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .verify-body { text-align: left; }
+}

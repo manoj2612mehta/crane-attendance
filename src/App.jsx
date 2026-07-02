@@ -113,7 +113,7 @@ function ShellApp({ session }) {
       supabase.from('platforms').select('*').order('code'),
       supabase.from('operators').select('*').eq('active', true).order('full_name'),
       supabase.from('boarding_logs').select('*').order('boarded_at', { ascending: false }),
-      supabase.from('platform_incharges').select('platform_id, is_admin').eq('user_id', session.user.id),
+      supabase.from('platform_incharges').select('platform_id, is_admin, role').eq('user_id', session.user.id),
     ])
     setPlatforms(p||[]); setOperators(o||[]); setLogs(l||[]); setMyInch(inch||[])
     setIsAdmin((inch||[]).some(r => r.is_admin)); setLoading(false)
@@ -130,6 +130,7 @@ function ShellApp({ session }) {
 
   const myPlatformIds = myInch.map(r => r.platform_id)
   const myPlatforms = platforms.filter(p => myPlatformIds.includes(p.id))
+  const roleByPlatform = Object.fromEntries(myInch.map(r => [r.platform_id, r.role || 'view']))
 
   return (
     <div className="app-shell">
@@ -146,13 +147,17 @@ function ShellApp({ session }) {
           onClick={() => { setTab('dashboard'); setOpenPlatform(null) }}>Dashboard</button>}
         {!isAdmin && <button className={tab==='myplatform'?'tab is-active':'tab'}
           onClick={() => setTab('myplatform')}>My platforms {myPlatforms.length?`· ${myPlatforms.length}`:''}</button>}
+        <button className={tab==='verifier'?'tab is-active':'tab'}
+          onClick={() => setTab('verifier')}>Rest verifier</button>
         <button className={tab==='personnel'?'tab is-active':'tab'}
           onClick={() => setTab('personnel')}>Crane team {operators.length?`· ${operators.length}`:''}</button>
       </nav>
 
       <main className="main">
         {loading ? <div className="pulse-dot" /> :
-          tab === 'personnel'
+          tab === 'verifier'
+            ? <VerifierTab operators={operators} logs={logs} platforms={platforms} />
+          : tab === 'personnel'
             ? <PersonnelTab operators={operators} logs={logs} reload={load} />
           : tab === 'dashboard' && isAdmin
             ? (openPlatform
@@ -161,7 +166,8 @@ function ShellApp({ session }) {
                 : <AdminDashboard platforms={platforms} operators={operators} logs={logs} onOpen={setOpenPlatform} />)
           : (myPlatforms.length === 0
               ? <NoAssignment />
-              : <MyPlatformsView myPlatforms={myPlatforms} operators={operators} logs={logs} session={session} reload={load} />)
+              : <MyPlatformsView myPlatforms={myPlatforms} operators={operators} logs={logs}
+                  session={session} reload={load} roleByPlatform={roleByPlatform} />)
         }
       </main>
 
@@ -234,20 +240,23 @@ function AdminDashboard({ platforms, operators, logs, onOpen }) {
 }
 
 /* ============================================================ MY PLATFORMS */
-function MyPlatformsView({ myPlatforms, operators, logs, session, reload }) {
+function MyPlatformsView({ myPlatforms, operators, logs, session, reload, roleByPlatform }) {
   const [selId, setSelId] = useState(myPlatforms[0]?.id)
   useEffect(() => { if (!selId && myPlatforms[0]) setSelId(myPlatforms[0].id) }, [myPlatforms, selId])
   const platform = myPlatforms.find(p => p.id === selId) || myPlatforms[0]
+  const isView = (roleByPlatform[platform.id] || 'view') !== 'icm'
   return (
     <div className="stack">
       {myPlatforms.length > 1 && (
         <div className="platform-switch">
           {myPlatforms.map(p => (
-            <button key={p.id} className={p.id===platform.id?'pill is-active':'pill'} onClick={() => setSelId(p.id)}>{p.code}</button>
+            <button key={p.id} className={p.id===platform.id?'pill is-active':'pill'} onClick={() => setSelId(p.id)}>
+              {p.code}{(roleByPlatform[p.id]||'view')!=='icm' ? ' · view' : ''}</button>
           ))}
         </div>
       )}
-      <PlatformSheet platform={platform} operators={operators} logs={logs} session={session} canExport reload={reload} />
+      <PlatformSheet platform={platform} operators={operators} logs={logs} session={session}
+        canExport readOnly={isView} reload={reload} />
     </div>
   )
 }
@@ -357,15 +366,17 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
               ? <tr><td colSpan={8} className="empty pad">No records match these filters.</td></tr>
               : rows.map(l => {
                   const o = opById[l.operator_id]; const onboard = !l.deboarded_at
+                  const days = tripDays(l.boarded_at, l.deboarded_at)
+                  const overstay = onboard && days > 28
                   return (
-                    <tr key={l.id} className={onboard?'row-on':''}>
+                    <tr key={l.id} className={overstay ? 'row-over' : (onboard?'row-on':'')}>
                       <td><span className="op-name">{o?.full_name||'—'}</span>
-                        <span className="op-sub tnum muted">{o?.emp_code}</span></td>
+                        <span className="op-sub tnum muted">{o?.emp_code||''}</span></td>
                       <td><span className={`desig desig--${o?.designation}`}>{o?.designation||'—'}</span></td>
                       <td className="tnum muted">{o?.ned_pass_no||'—'}</td>
                       <td className="tnum">{fmtDate(l.boarded_at)}</td>
                       <td className="tnum">{fmtDate(l.deboarded_at)}</td>
-                      <td className="ta-r tnum days-cell">{tripDays(l.boarded_at,l.deboarded_at)}</td>
+                      <td className="ta-r tnum days-cell">{days}{overstay && <span className="over-flag">!</span>}</td>
                       <td>{onboard?<span className="status-tag status-tag--on">Present</span>:<span className="status-tag">Absent</span>}</td>
                       <td className="ta-r">{onboard && !readOnly && <button className="btn btn--deboard-sm" onClick={() => setDeboardLog(l)}>Deboard</button>}</td>
                     </tr>)
@@ -599,6 +610,78 @@ function PersonnelTab({ operators, logs, reload }) {
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+/* ============================================================ VERIFIER (rest-period check) */
+const MIN_REST_DAYS = 28
+function VerifierTab({ operators, logs, platforms }) {
+  const [q, setQ] = useState('')
+  const pById = Object.fromEntries(platforms.map(p => [p.id, p]))
+
+  const results = operators
+    .filter(o => q.trim() && `${o.full_name} ${o.ned_pass_no||''} ${o.emp_code||''}`.toLowerCase().includes(q.trim().toLowerCase()))
+    .map(o => {
+      const opLogs = logs.filter(l => l.operator_id === o.id)
+      const onboardNow = opLogs.find(l => !l.deboarded_at)
+      // most recent completed deboard
+      const closed = opLogs.filter(l => l.deboarded_at)
+        .sort((a,b) => new Date(b.deboarded_at) - new Date(a.deboarded_at))[0]
+      let state, daysSince = null, lastDate = null, lastPlatform = null
+      if (onboardNow) { state = 'onboard'; lastPlatform = pById[onboardNow.platform_id]?.code }
+      else if (!closed) { state = 'never' }
+      else {
+        lastDate = closed.deboarded_at
+        lastPlatform = pById[closed.platform_id]?.code
+        daysSince = Math.round((dOnly(new Date()) - dOnly(closed.deboarded_at)) / 86400000)
+        state = daysSince >= MIN_REST_DAYS ? 'eligible' : 'resting'
+      }
+      return { o, state, daysSince, lastDate, lastPlatform }
+    })
+
+  return (
+    <div className="stack">
+      <div className="col">
+        <div className="col-head">Reboarding eligibility check</div>
+        <p className="muted small" style={{marginTop:'-8px', marginBottom:'14px'}}>
+          Minimum {MIN_REST_DAYS} days rest required after deboarding before a person can be reboarded.
+          Search by name or NED pass number.</p>
+        <input className="search" autoFocus placeholder="Search name or NED pass number…"
+          value={q} onChange={e=>setQ(e.target.value)} />
+      </div>
+
+      {q.trim() && (
+        <div className="col">
+          {results.length === 0
+            ? <div className="empty pad">No personnel match “{q}”.</div>
+            : <div className="verify-list">
+                {results.map(({ o, state, daysSince, lastDate, lastPlatform }) => (
+                  <div key={o.id} className={`verify-card verify-card--${state}`}>
+                    <div className="verify-main">
+                      <div className="verify-name">{o.full_name}
+                        <span className={`desig desig--${o.designation}`}>{o.designation}</span></div>
+                      <div className="op-sub muted tnum">NED {o.ned_pass_no}{o.emp_code?` · ${o.emp_code}`:''}</div>
+                    </div>
+                    <div className="verify-body">
+                      {state==='onboard' && <>
+                        <div className="verify-badge vb-onboard">Currently onboard</div>
+                        <div className="verify-note">On {lastPlatform} now — not deboarded yet.</div></>}
+                      {state==='never' && <>
+                        <div className="verify-badge vb-neutral">No prior deboarding</div>
+                        <div className="verify-note">No completed trip on record. Eligible to board.</div></>}
+                      {state==='eligible' && <>
+                        <div className="verify-badge vb-eligible">Eligible · {daysSince} days rested</div>
+                        <div className="verify-note">Last deboarded {fmtDate(lastDate)} from {lastPlatform}.</div></>}
+                      {state==='resting' && <>
+                        <div className="verify-badge vb-resting">Not yet · {daysSince} / {MIN_REST_DAYS} days</div>
+                        <div className="verify-note">Last deboarded {fmtDate(lastDate)} from {lastPlatform}. {MIN_REST_DAYS - daysSince} more days needed.</div></>}
+                    </div>
+                  </div>
+                ))}
+              </div>}
+        </div>
+      )}
     </div>
   )
 }
