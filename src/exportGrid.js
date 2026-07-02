@@ -92,3 +92,45 @@ export function exportMonthlyGrid({ platform, operators, logs, year, month /* 0-
   const fname = `${platform.code}_attendance_${monthName}_${year}.xlsx`
   XLSX.writeFile(wb, fname)
 }
+
+/* ---------- Sample import template ---------- */
+export function downloadImportTemplate() {
+  const aoa = [
+    ['full_name', 'ned_pass_no', 'designation', 'emp_code', 'phone'],
+    ['Ramesh Yadav', 'NED-1001', 'CO', 'ONG-4471', '+91 90000 11111'],
+    ['Suresh Pillai', 'NED-1002', 'CT', 'ONG-5582', ''],
+    ['Amit Deshmukh', 'NED-1003', 'SUP', '', '+91 90000 33333'],
+  ]
+  const ws = XLSX.utils.aoa_to_sheet(aoa)
+  ws['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 18 }]
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'personnel')
+  XLSX.writeFile(wb, 'crane_team_import_template.xlsx')
+}
+
+/* ---------- Parse an uploaded import file ---------- */
+export async function parseImportFile(file) {
+  const buf = await file.arrayBuffer()
+  const wb = XLSX.read(buf, { type: 'array' })
+  const ws = wb.Sheets[wb.SheetNames[0]]
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '' })
+  const valid = [], errors = []
+  const seenNed = new Set()
+  rows.forEach((r, i) => {
+    const name = String(r.full_name || r.name || '').trim()
+    const ned = String(r.ned_pass_no || r.ned || r.NED || '').trim()
+    const desig = String(r.designation || r.desig || '').trim().toUpperCase()
+    const emp = String(r.emp_code || r.emp || '').trim()
+    const phone = String(r.phone || '').trim()
+    const rowNo = i + 2
+    if (!name && !ned && !desig) return // skip blank line
+    if (!name) { errors.push(`Row ${rowNo}: missing name`); return }
+    if (!ned) { errors.push(`Row ${rowNo}: missing NED pass`); return }
+    if (!['CO','CT','SUP'].includes(desig)) { errors.push(`Row ${rowNo}: designation must be CO, CT or SUP`); return }
+    if (seenNed.has(ned)) { errors.push(`Row ${rowNo}: duplicate NED ${ned} in file`); return }
+    seenNed.add(ned)
+    valid.push({ full_name: name, ned_pass_no: ned, designation: desig,
+      emp_code: emp || null, phone: phone || null, is_dnf: false })
+  })
+  return { valid, errors }
+}

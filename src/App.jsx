@@ -158,7 +158,7 @@ function ShellApp({ session }) {
           tab === 'verifier'
             ? <VerifierTab operators={operators} logs={logs} platforms={platforms} />
           : tab === 'personnel'
-            ? <PersonnelTab operators={operators} logs={logs} reload={load} />
+            ? <PersonnelTab operators={operators} logs={logs} reload={load} isAdmin={isAdmin} />
           : tab === 'dashboard' && isAdmin
             ? (openPlatform
                 ? <PlatformSheet platform={platforms.find(p=>p.id===openPlatform)} operators={operators}
@@ -268,6 +268,7 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
   const [from, setFrom] = useState(''), [to, setTo] = useState('')
   const [q, setQ] = useState('')
   const [desigF, setDesigF] = useState('all')       // filter by CO/CT/SUP in the table
+  const [dnfOnly, setDnfOnly] = useState(false)
   const [boarding, setBoarding] = useState(false)
   const [deboardLog, setDeboardLog] = useState(null)
   const [exportOpen, setExportOpen] = useState(false)
@@ -290,6 +291,7 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
     if (status==='onboard' && l.deboarded_at) return false
     if (status==='deboarded' && !l.deboarded_at) return false
     if (desigF!=='all' && o?.designation!==desigF) return false
+    if (dnfOnly && !o?.is_dnf) return false
     if (rangeStart && dOnly(l.boarded_at) < rangeStart) return false
     if (rangeEnd && dOnly(l.boarded_at) > rangeEnd) return false
     if (q.trim()) {
@@ -311,6 +313,20 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
     const { error } = await supabase.from('boarding_logs').insert({
       operator_id, platform_id: platform.id, boarded_at: pickedToISO(ymd), boarded_by: session.user.id })
     if (error) alert(error.message.includes('one_open_trip') ? 'This person is already onboard somewhere. Deboard them first.' : error.message)
+    setBoarding(false); reload()
+  }
+  const doBoardDNF = async ({ name, ned }, ymd) => {
+    // create a DNF operator, then board them
+    const { data, error } = await supabase.from('operators').insert({
+      full_name: name.trim(), ned_pass_no: ned.trim(), designation: 'CO', is_dnf: true })
+      .select().single()
+    if (error) {
+      alert(error.message.toLowerCase().includes('ned') ? 'A person with this NED pass already exists in the master. Board them from the list instead.' : error.message)
+      return
+    }
+    const { error: e2 } = await supabase.from('boarding_logs').insert({
+      operator_id: data.id, platform_id: platform.id, boarded_at: pickedToISO(ymd), boarded_by: session.user.id })
+    if (e2) alert(e2.message)
     setBoarding(false); reload()
   }
 
@@ -340,12 +356,13 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
         <div className="seg">
           {['all','onboard','deboarded'].map(s => (
             <button key={s} className={status===s?'seg-btn is-on':'seg-btn'} onClick={()=>setStatus(s)}>
-              {s==='all'?'All':s==='onboard'?'Present':'Absent'}</button>))}
+              {s==='all'?'All':s==='onboard'?'On Board':'Deboarded'}</button>))}
         </div>
         <div className="seg">
           {[['all','All roles'],['CO','CO'],['CT','CT'],['SUP','SUP']].map(([v,l]) => (
             <button key={v} className={desigF===v?'seg-btn is-on':'seg-btn'} onClick={()=>setDesigF(v)}>{l}</button>))}
         </div>
+        <button className={dnfOnly?'seg-btn seg-btn--dnf is-on':'seg-btn seg-btn--dnf'} onClick={()=>setDnfOnly(v=>!v)}>DNF only</button>
         <div className="seg">
           {[['all','All time'],['1m','1 month'],['3m','3 months'],['custom','Custom']].map(([v,l]) => (
             <button key={v} className={range===v?'seg-btn is-on':'seg-btn'} onClick={()=>setRange(v)}>{l}</button>))}
@@ -371,13 +388,14 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
                   return (
                     <tr key={l.id} className={overstay ? 'row-over' : (onboard?'row-on':'')}>
                       <td><span className="op-name">{o?.full_name||'—'}</span>
+                        {o?.is_dnf && <span className="dnf-badge">DNF</span>}
                         <span className="op-sub tnum muted">{o?.emp_code||''}</span></td>
                       <td><span className={`desig desig--${o?.designation}`}>{o?.designation||'—'}</span></td>
                       <td className="tnum muted">{o?.ned_pass_no||'—'}</td>
                       <td className="tnum">{fmtDate(l.boarded_at)}</td>
                       <td className="tnum">{fmtDate(l.deboarded_at)}</td>
                       <td className="ta-r tnum days-cell">{days}{overstay && <span className="over-flag">!</span>}</td>
-                      <td>{onboard?<span className="status-tag status-tag--on">Present</span>:<span className="status-tag">Absent</span>}</td>
+                      <td>{onboard?<span className="status-tag status-tag--on">On Board</span>:<span className="status-tag">Deboarded</span>}</td>
                       <td className="ta-r">{onboard && !readOnly && <button className="btn btn--deboard-sm" onClick={() => setDeboardLog(l)}>Deboard</button>}</td>
                     </tr>)
                 })}
@@ -386,7 +404,7 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
       </div>
 
       {boarding && <BoardModal platform={platform} operators={operators} logs={logs}
-        onClose={() => setBoarding(false)} onBoard={doBoard} />}
+        onClose={() => setBoarding(false)} onBoard={doBoard} onBoardDNF={doBoardDNF} />}
       {deboardLog && <DeboardModal log={deboardLog} operator={opById[deboardLog.operator_id]}
         onClose={() => setDeboardLog(null)} onConfirm={doDeboard} />}
       {exportOpen && <ExportModal platform={platform} operators={operators} logs={logs}
@@ -409,17 +427,19 @@ function TeamBlock({ title, tone, s, onClick, sub }) {
   )
 }
 
-/* ---------- Board modal (with filters) ---------- */
-function BoardModal({ platform, operators, logs, onClose, onBoard }) {
+/* ---------- Board modal (with filters + DNF fallback) ---------- */
+function BoardModal({ platform, operators, logs, onClose, onBoard, onBoardDNF }) {
   const onboardAnywhere = new Set(logs.filter(l => !l.deboarded_at).map(l => l.operator_id))
+  const [mode, setMode] = useState('list')          // 'list' | 'dnf'
   const [desigF, setDesigF] = useState('all')
   const [q, setQ] = useState('')
   const [opId, setOpId] = useState('')
   const [ymd, setYmd] = useState(todayISO())
+  const [dnfName, setDnfName] = useState(''), [dnfNed, setDnfNed] = useState('')
 
   const available = operators.filter(o => !onboardAnywhere.has(o.id))
     .filter(o => desigF==='all' || o.designation===desigF)
-    .filter(o => !q.trim() || `${o.full_name} ${o.emp_code} ${o.ned_pass_no||''}`.toLowerCase().includes(q.trim().toLowerCase()))
+    .filter(o => !q.trim() || `${o.full_name} ${o.emp_code||''} ${o.ned_pass_no||''}`.toLowerCase().includes(q.trim().toLowerCase()))
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -427,31 +447,48 @@ function BoardModal({ platform, operators, logs, onClose, onBoard }) {
         <div className="modal-head"><div><div className="eyebrow">{platform.code}</div><h3>Board personnel</h3></div>
           <button className="x" onClick={onClose}>×</button></div>
 
-        <div className="board-filters">
-          <div className="seg">
-            {[['all','All'],['CO','CO'],['CT','CT'],['SUP','SUP']].map(([v,l]) => (
-              <button key={v} className={desigF===v?'seg-btn is-on':'seg-btn'} onClick={()=>setDesigF(v)}>{l}</button>))}
-          </div>
-          <input className="search" placeholder="Search name / code / NED…" value={q} onChange={e=>setQ(e.target.value)} />
+        <div className="seg board-mode">
+          <button className={mode==='list'?'seg-btn is-on':'seg-btn'} onClick={()=>setMode('list')}>From master list</button>
+          <button className={mode==='dnf'?'seg-btn is-on':'seg-btn'} onClick={()=>setMode('dnf')}>Details not found (DNF)</button>
         </div>
 
-        <div className="board-list">
-          {available.length===0
-            ? <div className="empty pad">No available personnel match this filter.</div>
-            : available.map(o => (
-                <button key={o.id} className={opId===o.id?'board-row is-sel':'board-row'} onClick={()=>setOpId(o.id)}>
-                  <span className={`desig desig--${o.designation}`}>{o.designation}</span>
-                  <span className="op-name">{o.full_name}</span>
-                  <span className="op-sub muted tnum">{o.emp_code}{o.ned_pass_no?` · NED ${o.ned_pass_no}`:''}</span>
-                  {opId===o.id && <span className="tick">✓</span>}
-                </button>))}
-        </div>
+        {mode==='list' ? <>
+          <div className="board-filters">
+            <div className="seg">
+              {[['all','All'],['CO','CO'],['CT','CT'],['SUP','SUP']].map(([v,l]) => (
+                <button key={v} className={desigF===v?'seg-btn is-on':'seg-btn'} onClick={()=>setDesigF(v)}>{l}</button>))}
+            </div>
+            <input className="search" placeholder="Search name / code / NED…" value={q} onChange={e=>setQ(e.target.value)} />
+          </div>
+          <div className="board-list">
+            {available.length===0
+              ? <div className="empty pad">No available personnel match this filter.</div>
+              : available.map(o => (
+                  <button key={o.id} className={opId===o.id?'board-row is-sel':'board-row'} onClick={()=>setOpId(o.id)}>
+                    <span className={`desig desig--${o.designation}`}>{o.designation}</span>
+                    <span className="op-name">{o.full_name}{o.is_dnf && <span className="dnf-badge">DNF</span>}</span>
+                    <span className="op-sub muted tnum">{o.emp_code||'—'}{o.ned_pass_no?` · NED ${o.ned_pass_no}`:''}</span>
+                    {opId===o.id && <span className="tick">✓</span>}
+                  </button>))}
+          </div>
+        </> : <>
+          <div className="dnf-note">Person not in the master list. Enter rough details — admin will review and approve later.</div>
+          <div className="two-fields">
+            <label className="field"><span>Name</span>
+              <input value={dnfName} onChange={e=>setDnfName(e.target.value)} placeholder="Rough name" /></label>
+            <label className="field"><span>NED pass no</span>
+              <input value={dnfNed} onChange={e=>setDnfNed(e.target.value)} placeholder="NED number" /></label>
+          </div>
+        </>}
 
         <label className="field field--inline"><span>Boarding date</span>
           <input type="date" value={ymd} max={todayISO()} onChange={e=>setYmd(e.target.value)} /></label>
         <div className="modal-actions">
           <button className="btn btn--ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn--primary" disabled={!opId} onClick={()=>onBoard(opId, ymd)}>Board</button>
+          {mode==='list'
+            ? <button className="btn btn--primary" disabled={!opId} onClick={()=>onBoard(opId, ymd)}>Board</button>
+            : <button className="btn btn--primary" disabled={!dnfName.trim()||!dnfNed.trim()}
+                onClick={()=>onBoardDNF({ name: dnfName, ned: dnfNed }, ymd)}>Board as DNF</button>}
         </div>
       </div>
     </div>
@@ -511,12 +548,16 @@ function ExportModal({ platform, operators, logs, onClose }) {
 }
 
 /* ============================================================ PERSONNEL TAB */
-function PersonnelTab({ operators, logs, reload }) {
+function PersonnelTab({ operators, logs, reload, isAdmin }) {
   const [emp, setEmp] = useState(''), [name, setName] = useState('')
   const [desig, setDesig] = useState(''), [ned, setNed] = useState(''), [phone, setPhone] = useState('')
   const [busy, setBusy] = useState(false), [err, setErr] = useState('')
   const [q, setQ] = useState(''), [teamF, setTeamF] = useState('all')
+  const [importMsg, setImportMsg] = useState('')
+  const [editDnf, setEditDnf] = useState(null)
   const onboardIds = new Set(logs.filter(l => !l.deboarded_at).map(l => l.operator_id))
+
+  const dnfPeople = operators.filter(o => o.is_dnf)
 
   const add = async () => {
     setErr('')
@@ -524,61 +565,119 @@ function PersonnelTab({ operators, logs, reload }) {
     setBusy(true)
     const { error } = await supabase.from('operators').insert({
       emp_code: emp.trim() || null, full_name: name.trim(), designation: desig,
-      ned_pass_no: ned.trim(), phone: phone.trim() || null })
+      ned_pass_no: ned.trim(), phone: phone.trim() || null, is_dnf: false })
     setBusy(false)
     if (error) {
       const m = error.message.toLowerCase()
       setErr(m.includes('ned') ? 'This NED pass number already exists.'
         : (m.includes('emp_code') || (m.includes('duplicate') && m.includes('emp'))) ? 'This employee code already exists.'
-        : m.includes('duplicate') ? 'This person already exists.' : error.message)
+        : m.includes('duplicate') ? 'This person already exists.'
+        : m.includes('row-level') || m.includes('policy') ? 'Only admins can add master personnel.' : error.message)
       return
     }
     setEmp(''); setName(''); setDesig(''); setNed(''); setPhone(''); reload()
   }
 
+  const onImport = async (e) => {
+    setImportMsg('')
+    const file = e.target.files?.[0]; if (!file) return
+    try {
+      const { parseImportFile } = await import('./exportGrid')
+      const { valid, errors } = await parseImportFile(file)
+      if (valid.length === 0) { setImportMsg(`No valid rows. ${errors.slice(0,3).join('; ')}`); e.target.value=''; return }
+      const { error } = await supabase.from('operators').insert(valid)
+      if (error) {
+        setImportMsg(error.message.toLowerCase().includes('duplicate')
+          ? 'Some NED numbers already exist. Remove duplicates and re-import.' : error.message)
+      } else {
+        setImportMsg(`Imported ${valid.length} personnel.${errors.length?` Skipped ${errors.length}: ${errors.slice(0,3).join('; ')}`:''}`)
+        reload()
+      }
+    } catch (ex) { setImportMsg('Could not read the file. Use the sample template format.') }
+    e.target.value = ''
+  }
+
+  const downloadTemplate = async () => {
+    const { downloadImportTemplate } = await import('./exportGrid')
+    downloadImportTemplate()
+  }
+
   const shown = operators
     .filter(o => teamF==='all' || teamOf(o.designation)===teamF)
-    .filter(o => !q.trim() || `${o.full_name} ${o.emp_code} ${o.ned_pass_no||''}`.toLowerCase().includes(q.trim().toLowerCase()))
-
+    .filter(o => !q.trim() || `${o.full_name} ${o.emp_code||''} ${o.ned_pass_no||''}`.toLowerCase().includes(q.trim().toLowerCase()))
   const co  = shown.filter(o => o.designation==='CO')
   const main = shown.filter(o => o.designation==='CT' || o.designation==='SUP')
 
   const Rows = ({ items }) => items.map(o => (
     <tr key={o.id}>
-      <td className="op-name">{o.full_name}</td>
+      <td className="op-name">{o.full_name}{o.is_dnf && <span className="dnf-badge">DNF</span>}</td>
       <td><span className={`desig desig--${o.designation}`}>{o.designation}</span></td>
-      <td className="tnum muted">{o.emp_code}</td>
+      <td className="tnum muted">{o.emp_code||'—'}</td>
       <td className="tnum muted">{o.ned_pass_no||'—'}</td>
       <td className="muted">{o.phone||'—'}</td>
-      <td>{onboardIds.has(o.id)?<span className="status-tag status-tag--on">Present</span>:<span className="status-tag">Absent</span>}</td>
+      <td>{onboardIds.has(o.id)?<span className="status-tag status-tag--on">On Board</span>:<span className="status-tag">Deboarded</span>}</td>
     </tr>
   ))
 
   return (
     <div className="stack">
-      <div className="col">
-        <div className="col-head">Add crane team personnel</div>
-        <div className="add-op__grid add-op__grid--5">
-          <label className="field"><span>Emp code <em>(optional)</em></span>
-            <input value={emp} onChange={e=>setEmp(e.target.value)} placeholder="ONG-4471" /></label>
-          <label className="field"><span>Full name</span>
-            <input value={name} onChange={e=>setName(e.target.value)} placeholder="Ramesh Yadav" /></label>
-          <label className="field"><span>Designation</span>
-            <select value={desig} onChange={e=>setDesig(e.target.value)}>
-              <option value="">Select…</option>
-              {DESIGS.map(d=><option key={d.code} value={d.code}>{d.code} · {d.label}</option>)}</select></label>
-          <label className="field"><span>NED pass</span>
-            <input value={ned} onChange={e=>setNed(e.target.value)} placeholder="NED-0093" /></label>
-          <label className="field"><span>Phone <em>(optional)</em></span>
-            <input value={phone} onChange={e=>setPhone(e.target.value)} onKeyDown={e=>e.key==='Enter'&&add()} placeholder="+91 …" /></label>
+      {/* DNF review — admin only */}
+      {isAdmin && dnfPeople.length > 0 && (
+        <div className="col col--flag">
+          <div className="col-head col-head--flag">DNF review · {dnfPeople.length} pending approval</div>
+          <p className="muted small" style={{marginTop:'-8px',marginBottom:'14px'}}>
+            These were boarded by ICM without master details. Review, complete the details, and approve to move them into the master roster.</p>
+          <div className="table-wrap"><table className="ledger">
+            <thead><tr><th>Name</th><th>NED</th><th>Boarded via</th><th></th></tr></thead>
+            <tbody>{dnfPeople.map(o => (
+              <tr key={o.id}>
+                <td className="op-name">{o.full_name}<span className="dnf-badge">DNF</span></td>
+                <td className="tnum muted">{o.ned_pass_no}</td>
+                <td className="muted">{onboardIds.has(o.id)?'Currently onboard':'Deboarded'}</td>
+                <td className="ta-r"><button className="btn btn--primary btn--xs" onClick={()=>setEditDnf(o)}>Review &amp; approve</button></td>
+              </tr>))}</tbody>
+          </table></div>
         </div>
-        <div className="add-row">
-          {err && <div className="err">{err}</div>}
-          <button className="btn btn--primary" disabled={busy} onClick={add}>{busy?'Adding…':'Add personnel'}</button>
-        </div>
-        <p className="muted small">Personnel added here are shared across all platforms — the same crew rotates between them.</p>
-      </div>
+      )}
 
+      {/* Add + import — admin only */}
+      {isAdmin ? (
+        <div className="col">
+          <div className="col-head-row">
+            <div className="col-head">Add crane team personnel</div>
+            <div className="import-tools">
+              <button className="btn btn--ghost btn--xs" onClick={downloadTemplate}>⭳ Sample template</button>
+              <label className="btn btn--primary btn--xs import-btn">⭱ Import Excel
+                <input type="file" accept=".xlsx,.xls,.csv" onChange={onImport} hidden /></label>
+            </div>
+          </div>
+          {importMsg && <div className="import-msg">{importMsg}</div>}
+          <div className="add-op__grid add-op__grid--5">
+            <label className="field"><span>Emp code <em>(optional)</em></span>
+              <input value={emp} onChange={e=>setEmp(e.target.value)} placeholder="ONG-4471" /></label>
+            <label className="field"><span>Full name</span>
+              <input value={name} onChange={e=>setName(e.target.value)} placeholder="Ramesh Yadav" /></label>
+            <label className="field"><span>Designation</span>
+              <select value={desig} onChange={e=>setDesig(e.target.value)}>
+                <option value="">Select…</option>
+                {DESIGS.map(d=><option key={d.code} value={d.code}>{d.code} · {d.label}</option>)}</select></label>
+            <label className="field"><span>NED pass</span>
+              <input value={ned} onChange={e=>setNed(e.target.value)} placeholder="NED-0093" /></label>
+            <label className="field"><span>Phone <em>(optional)</em></span>
+              <input value={phone} onChange={e=>setPhone(e.target.value)} onKeyDown={e=>e.key==='Enter'&&add()} placeholder="+91 …" /></label>
+          </div>
+          <div className="add-row">
+            {err && <div className="err">{err}</div>}
+            <button className="btn btn--primary" disabled={busy} onClick={add}>{busy?'Adding…':'Add personnel'}</button>
+          </div>
+          <p className="muted small">Personnel are shared across all platforms — the same crew rotates between them.</p>
+        </div>
+      ) : (
+        <div className="col"><p className="muted small" style={{margin:0}}>
+          Only admins can add or import master personnel. ICM can add unknown persons as DNF during boarding.</p></div>
+      )}
+
+      {/* Roster */}
       <div className="col">
         <div className="col-head-row">
           <div className="col-head">Roster · {operators.length}</div>
@@ -590,25 +689,66 @@ function PersonnelTab({ operators, logs, reload }) {
             <input className="search search--sm" placeholder="Search…" value={q} onChange={e=>setQ(e.target.value)} />
           </div>
         </div>
+        {(teamF==='all'||teamF==='operation') && (<>
+          <div className="team-band">Crane Operation</div>
+          <div className="table-wrap"><table className="ledger">
+            <thead><tr><th>Name</th><th>Desig</th><th>Code</th><th>NED</th><th>Phone</th><th>Status</th></tr></thead>
+            <tbody>{co.length?<Rows items={co} />:<tr><td colSpan={6} className="empty pad">No operators.</td></tr>}</tbody>
+          </table></div></>)}
+        {(teamF==='all'||teamF==='maintenance') && (<>
+          <div className="team-band team-band--teal">Crane Maintenance</div>
+          <div className="table-wrap"><table className="ledger">
+            <thead><tr><th>Name</th><th>Desig</th><th>Code</th><th>NED</th><th>Phone</th><th>Status</th></tr></thead>
+            <tbody>{main.length?<Rows items={main} />:<tr><td colSpan={6} className="empty pad">No maintenance personnel.</td></tr>}</tbody>
+          </table></div></>)}
+      </div>
 
-        {(teamF==='all'||teamF==='operation') && (
-          <>
-            <div className="team-band">Crane Operation</div>
-            <div className="table-wrap"><table className="ledger">
-              <thead><tr><th>Name</th><th>Desig</th><th>Code</th><th>NED</th><th>Phone</th><th>Status</th></tr></thead>
-              <tbody>{co.length?<Rows items={co} />:<tr><td colSpan={6} className="empty pad">No operators.</td></tr>}</tbody>
-            </table></div>
-          </>
-        )}
-        {(teamF==='all'||teamF==='maintenance') && (
-          <>
-            <div className="team-band team-band--teal">Crane Maintenance</div>
-            <div className="table-wrap"><table className="ledger">
-              <thead><tr><th>Name</th><th>Desig</th><th>Code</th><th>NED</th><th>Phone</th><th>Status</th></tr></thead>
-              <tbody>{main.length?<Rows items={main} />:<tr><td colSpan={6} className="empty pad">No maintenance personnel.</td></tr>}</tbody>
-            </table></div>
-          </>
-        )}
+      {editDnf && <DnfApproveModal op={editDnf} onClose={()=>setEditDnf(null)} reload={reload} />}
+    </div>
+  )
+}
+
+/* ---------- DNF approve modal (admin) ---------- */
+function DnfApproveModal({ op, onClose, reload }) {
+  const [name, setName] = useState(op.full_name || '')
+  const [ned, setNed] = useState(op.ned_pass_no || '')
+  const [desig, setDesig] = useState(op.designation || 'CO')
+  const [emp, setEmp] = useState(op.emp_code || ''), [phone, setPhone] = useState(op.phone || '')
+  const [busy, setBusy] = useState(false), [err, setErr] = useState('')
+
+  const approve = async () => {
+    setErr('')
+    if (!name.trim() || !ned.trim()) { setErr('Name and NED are required.'); return }
+    setBusy(true)
+    const { error } = await supabase.from('operators').update({
+      full_name: name.trim(), ned_pass_no: ned.trim(), designation: desig,
+      emp_code: emp.trim() || null, phone: phone.trim() || null, is_dnf: false }).eq('id', op.id)
+    setBusy(false)
+    if (error) { setErr(error.message.toLowerCase().includes('ned') ? 'This NED already exists on another person.' : error.message); return }
+    onClose(); reload()
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <div className="modal-head"><div><div className="eyebrow">DNF review</div><h3>Approve into master</h3></div>
+          <button className="x" onClick={onClose}>×</button></div>
+        <div className="two-fields">
+          <label className="field"><span>Full name</span><input value={name} onChange={e=>setName(e.target.value)} /></label>
+          <label className="field"><span>NED pass</span><input value={ned} onChange={e=>setNed(e.target.value)} /></label>
+        </div>
+        <div className="two-fields">
+          <label className="field"><span>Designation</span>
+            <select value={desig} onChange={e=>setDesig(e.target.value)}>
+              {DESIGS.map(d=><option key={d.code} value={d.code}>{d.code} · {d.label}</option>)}</select></label>
+          <label className="field"><span>Emp code <em>(optional)</em></span><input value={emp} onChange={e=>setEmp(e.target.value)} /></label>
+        </div>
+        <label className="field"><span>Phone <em>(optional)</em></span><input value={phone} onChange={e=>setPhone(e.target.value)} /></label>
+        {err && <div className="err">{err}</div>}
+        <div className="modal-actions">
+          <button className="btn btn--ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn--primary" disabled={busy} onClick={approve}>{busy?'Approving…':'Approve'}</button>
+        </div>
       </div>
     </div>
   )
