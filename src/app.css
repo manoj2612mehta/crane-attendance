@@ -216,3 +216,84 @@ code { background: var(--teal-tint); padding: 2px 6px; border-radius: 5px; font-
   .ledger { min-width: 640px; }
   .sheet-head { flex-direction: column; gap: 14px; align-items: stretch; }
 }
+
+/* ============ ONGC LOGO / BRANDMARK ============ */
+.brandmark { display: flex; align-items: center; gap: 14px; }
+.ongc-logo { height: 34px; width: auto; display: block; }
+.ongc-logo--hero { height: 30px; margin-bottom: 20px; background:#fff; padding: 6px 10px; border-radius: 8px; }
+.brandmark__txt .topbar__title { line-height: 1.15; }
+
+/* ============ TEAM STAT BLOCKS ============ */
+.team-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.team-block { background:#fff; border:1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow); overflow: hidden; }
+.team-block--amber { border-top: 3px solid var(--amber); }
+.team-block--teal { border-top: 3px solid var(--teal); }
+.team-head { font-family:'Space Grotesk'; font-weight: 600; font-size: 15px; padding: 16px 20px 12px;
+  display: flex; align-items: baseline; gap: 10px; }
+.team-sub { font-family:'Inter'; font-size: 12px; font-weight: 400; color: var(--ink-faint); }
+.team-stats { display: grid; grid-template-columns: repeat(3,1fr); border-top: 1px solid var(--line); }
+.team-stat { padding: 16px 20px; text-align: left; border-right: 1px solid var(--line); background: none; }
+.team-stat:last-child { border-right: none; }
+.team-stat--btn { cursor: pointer; transition: background .15s; }
+.team-stat--btn:hover { background: var(--paper); }
+.ts-val { font-family:'Space Grotesk'; font-size: 30px; font-weight: 600; line-height: 1; display: block; color: var(--ink); }
+.team-block--amber .team-stat--btn .ts-val { color: var(--amber); }
+.team-block--teal .team-stat--btn .ts-val { color: var(--teal); }
+.ts-lbl { font-size: 12px; color: var(--ink-faint); margin-top: 5px; display: block; }
+
+/* dashboard platform team pills */
+.pc-team-row { display: flex; gap: 8px; margin: 16px 0 14px; flex-wrap: wrap; }
+.pc-pill { font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 20px; letter-spacing: .02em; }
+.pc-pill--amber { background: var(--amber-soft); color: #7a4a12; }
+.pc-pill--teal { background: var(--teal-tint); color: var(--teal-deep); }
+.pc-pill--muted { background: var(--paper); color: var(--ink-soft); border: 1px solid var(--line); }
+
+/* ============ DESIGNATION PILLS ============ */
+.desig { font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 3px 8px; border-radius: 6px; }
+.desig--CO { background: var(--amber-soft); color: #7a4a12; }
+.desig--CT { background: var(--teal-tint); color: var(--teal-deep); }
+.desig--SUP { background: #ece7f6; color: #4a3b78; }
+
+/* ============ TEAM BANDS (personnel roster) ============ */
+.team-band { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--amber); padding: 8px 2px 6px; margin-top: 6px; }
+.team-band--teal { color: var(--teal); }
+
+/* ============ SHEET ACTIONS ============ */
+.sheet-actions { display: flex; gap: 10px; }
+.op-sub { display: block; font-size: 12px; margin-top: 2px; }
+
+/* ============ BOARD MODAL LIST ============ */
+.modal--wide { max-width: 520px; }
+.board-filters { display: flex; gap: 10px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
+.board-filters .search { flex: 1; min-width: 160px; }
+.board-list { max-height: 300px; overflow-y: auto; border: 1px solid var(--line);
+  border-radius: 10px; margin-bottom: 16px; }
+.board-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 11px 14px; border-bottom: 1px solid var(--line); background:#fff; transition: background .12s; }
+.board-row:last-child { border-bottom: none; }
+.board-row:hover { background: var(--paper); }
+.board-row.is-sel { background: var(--teal-tint); }
+.board-row .op-name { flex: 0 0 auto; }
+.board-row .op-sub { flex: 1; margin: 0; }
+.board-row .tick { color: var(--teal); font-weight: 700; }
+.field--inline { display: flex; align-items: center; gap: 14px; }
+.field--inline span { margin: 0; white-space: nowrap; }
+.field--inline input { flex: 1; }
+.two-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.two-fields .field { margin-bottom: 0; }
+
+/* ============ ADD PERSONNEL GRID ============ */
+.add-op__grid--5 { grid-template-columns: repeat(5, 1fr); }
+.add-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; }
+.add-row .err { margin: 0; }
+.roster-tools { display: flex; align-items: center; gap: 10px; }
+
+@media (max-width: 900px) {
+  .team-grid { grid-template-columns: 1fr; }
+  .add-op__grid--5 { grid-template-columns: 1fr; }
+  .two-fields { grid-template-columns: 1fr; }
+  .add-row { flex-direction: column; align-items: stretch; }
+  .roster-tools { flex-direction: column; align-items: stretch; }
+}
