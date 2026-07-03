@@ -2,7 +2,7 @@ import * as XLSX from 'xlsx'
 
 const IST = 'Asia/Kolkata'
 const dOnly = (d) => new Date(new Date(d).toLocaleDateString('en-CA', { timeZone: IST }))
-const DESIG_LABEL = { CO: 'Crane Operation', CT: 'Crane Maintenance', SUP: 'Crane Maintenance' }
+const DESIG_LABEL = { CO: 'Crane Operator', CT: 'Crane Maintenance', SUP: 'Crane Maintenance' }
 
 /* Was this operator onboard on a given calendar day (any stint)? */
 function presentOn(dayDate, logs) {
@@ -16,7 +16,7 @@ function presentOn(dayDate, logs) {
 
 /*
   Build a monthly attendance grid for ONE platform.
-  Rows grouped: Crane Operation (CO) then Crane Maintenance (CT, SUP).
+  Rows grouped: Crane Operator (CO) then Crane Maintenance (CT, SUP).
   Columns: day 1..N, then Total.
   present = tick, absent = blank/cross.
 */
@@ -27,7 +27,7 @@ export function exportMonthlyGrid({ platform, operators, logs, year, month /* 0-
   const opById = Object.fromEntries(operators.map(o => [o.id, o]))
 
   // which operators appear at least one day this month on this platform
-  const rowsByGroup = { 'Crane Operation': [], 'Crane Maintenance': [] }
+  const rowsByGroup = { 'Crane Operator': [], 'Crane Maintenance': [] }
   const monthStart = new Date(year, month, 1)
   const monthEnd = new Date(year, month, daysInMonth)
 
@@ -77,7 +77,7 @@ export function exportMonthlyGrid({ platform, operators, logs, year, month /* 0-
     })
   }
 
-  pushGroup('CRANE OPERATION', ['CO'])
+  pushGroup('CRANE OPERATOR', ['CO'])
   pushGroup('CRANE MAINTENANCE', ['CT', 'SUP'])
 
   if (activeOps.size === 0) aoa.push(['No attendance recorded for this month.'])

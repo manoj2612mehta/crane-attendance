@@ -211,12 +211,12 @@ function AdminDashboard({ platforms, operators, logs, onOpen }) {
       <div className="tally tally--4">
         <TallyCard label="Platforms" value={platforms.length} tone="teal" />
         <TallyCard label="Total onboard" value={open.length} tone="amber" />
-        <TallyCard label="Crane Operation onboard" value={opStats.count} unit="" tone="amber" />
+        <TallyCard label="Crane Operator onboard" value={opStats.count} unit="" tone="amber" />
         <TallyCard label="Crane Maintenance onboard" value={mtStats.count} unit="" tone="green" />
       </div>
 
       <div className="team-grid">
-        <TeamBlock title="Crane Operation" tone="amber" s={opStats} onClick={() => {}} />
+        <TeamBlock title="Crane Operator" tone="amber" s={opStats} onClick={() => {}} />
         <TeamBlock title="Crane Maintenance" tone="teal" s={mtStats} onClick={() => {}} sub="CT + Supervisor" />
       </div>
 
@@ -352,7 +352,7 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
 
       {/* team stat blocks */}
       <div className="team-grid">
-        <TeamBlock title="Crane Operation" tone="amber" s={opStats}
+        <TeamBlock title="Crane Operator" tone="amber" s={opStats}
           onClick={() => { setDesigF('CO'); setStatus('onboard') }} />
         <TeamBlock title="Crane Maintenance" tone="teal" s={mtStats}
           onClick={() => { setDesigF('all'); setStatus('onboard') }} sub="CT + Supervisor" />
@@ -540,7 +540,7 @@ function ExportModal({ platform, operators, logs, onClose }) {
       <div className="modal" onClick={e=>e.stopPropagation()}>
         <div className="modal-head"><div><div className="eyebrow">{platform.code}</div><h3>Download monthly attendance</h3></div>
           <button className="x" onClick={onClose}>×</button></div>
-        <p className="muted small">Day-wise grid (✓ present) for Crane Operation and Crane Maintenance, with total days per person.</p>
+        <p className="muted small">Day-wise grid (✓ present) for Crane Operator and Crane Maintenance, with total days per person.</p>
         <div className="two-fields">
           <label className="field"><span>Month</span>
             <select value={month} onChange={e=>setMonth(+e.target.value)}>
@@ -704,14 +704,14 @@ function PersonnelTab({ operators, logs, reload, isAdmin, platforms }) {
           <div className="col-head">Roster · {operators.length}</div>
           <div className="roster-tools">
             <div className="seg">
-              {[['all','All'],['operation','Operation'],['maintenance','Maintenance']].map(([v,l]) => (
+              {[['all','All'],['operation','Operator'],['maintenance','Maintenance']].map(([v,l]) => (
                 <button key={v} className={teamF===v?'seg-btn is-on':'seg-btn'} onClick={()=>setTeamF(v)}>{l}</button>))}
             </div>
             <input className="search search--sm" placeholder="Search…" value={q} onChange={e=>setQ(e.target.value)} />
           </div>
         </div>
         {(teamF==='all'||teamF==='operation') && (<>
-          <div className="team-band">Crane Operation</div>
+          <div className="team-band">Crane Operator</div>
           <div className="table-wrap"><table className="ledger">
             <thead><tr><th>Name</th><th>Desig</th><th>Code</th><th>NED</th><th>Phone</th><th>Status</th></tr></thead>
             <tbody>{co.length?<Rows items={co} />:<tr><td colSpan={6} className="empty pad">No operators.</td></tr>}</tbody>
