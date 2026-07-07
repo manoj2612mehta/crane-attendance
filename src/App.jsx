@@ -234,41 +234,27 @@ function AdminDashboard({ platforms, operators, logs, onOpen }) {
   const open = logs.filter(l => !l.deboarded_at)
   const opById = Object.fromEntries(operators.map(o => [o.id, o]))
   const [platFilter, setPlatFilter] = useState([])   // empty = all
-  const [tileFilter, setTileFilter] = useState(null)  // 'onboard'|'co'|'maint'|'over'|'crit'|'short'
   const togglePlat = (id) => setPlatFilter(f => f.includes(id) ? f.filter(x=>x!==id) : [...f, id])
-  const teamFilterActive = platFilter.length ? platforms.filter(p => platFilter.includes(p.id)) : platforms
+  const shown = platFilter.length ? platforms.filter(p => platFilter.includes(p.id)) : platforms
 
-  // when a tile is active, auto-narrow platform cards to those matching the metric
-  const matchTile = (p) => {
-    const oOpen = open.filter(l => l.platform_id === p.id)
-    if (!tileFilter) return true
-    if (tileFilter==='onboard') return oOpen.length>0
-    if (tileFilter==='co') return oOpen.some(l=>opById[l.operator_id]?.designation==='CO')
-    if (tileFilter==='maint') return oOpen.some(l=>teamOf(opById[l.operator_id]?.designation)==='maintenance')
-    if (tileFilter==='over') return oOpen.some(l=>tripDays(l.boarded_at,null)>OVERSTAY)
-    if (tileFilter==='crit') return oOpen.some(l=>tripDays(l.boarded_at,null)>CRITICAL)
-    if (tileFilter==='short') return rasFor(p, oOpen, operators).tShort>0
-    return true
-  }
-  const shown = teamFilterActive.filter(matchTile)
-
-  // fleet totals across platform-filtered set (tiles reflect platform filter, not tile filter)
-  const base = teamFilterActive
-  const baseIds = new Set(base.map(p=>p.id))
-  const openBase = open.filter(l => baseIds.has(l.platform_id))
-  const totReq = base.reduce((s,p)=>s+(p.required_co||0)+(p.required_ct||0)+(p.required_sup||0),0)
-  const totAct = openBase.length
+  // fleet totals across shown platforms
+  const shownIds = new Set(shown.map(p=>p.id))
+  const openShown = open.filter(l => shownIds.has(l.platform_id))
+  const totReq = shown.reduce((s,p)=>s+(p.required_co||0)+(p.required_ct||0)+(p.required_sup||0),0)
+  const totAct = openShown.length
   const totShort = Math.max(0, totReq-totAct)
-  const os = overStats(openBase)
-  const coCount = openBase.filter(l=>opById[l.operator_id]?.designation==='CO').length
-  const maintCount = openBase.filter(l=>teamOf(opById[l.operator_id]?.designation)==='maintenance').length
+  const os = overStats(openShown)
+  const coCount = openShown.filter(l=>opById[l.operator_id]?.designation==='CO').length
+  const ctCount = openShown.filter(l=>opById[l.operator_id]?.designation==='CT').length
+  const supCount = openShown.filter(l=>opById[l.operator_id]?.designation==='SUP').length
+  const maintCount = ctCount + supCount
+  const underCount = shown.filter(p=>rasFor(p, open.filter(l=>l.platform_id===p.id), operators).tShort>0).length
 
-  const Tile = ({ id, label, value, tone, unit, hint }) => (
-    <button className={`tile tile--${tone}${tileFilter===id?' is-on':''}`}
-      onClick={()=>setTileFilter(tileFilter===id?null:id)}>
-      <div className="tile-val tnum">{value}{unit && <span className="tile-unit">{unit}</span>}</div>
+  const Stat = ({ label, value, tone, hint }) => (
+    <div className={`tile tile--${tone} tile--static`}>
+      <div className="tile-val tnum">{value}</div>
       <div className="tile-lbl">{label}{hint && <span className="tile-hint"> · {hint}</span>}</div>
-    </button>
+    </div>
   )
 
   return (
@@ -279,14 +265,14 @@ function AdminDashboard({ platforms, operators, logs, onOpen }) {
         <TallyCard label="Shortage" value={totShort} tone={totShort>0?'red':'green'} />
       </div>
 
-      {/* interactive filter tiles */}
+      {/* static stat tiles */}
       <div className="tile-row">
-        <Tile id="onboard" label="Total on board" value={totAct} tone="amber" />
-        <Tile id="co" label="Crane Operator" value={coCount} tone="amber" />
-        <Tile id="maint" label="Crane Maintenance" value={maintCount} tone="teal" />
-        <Tile id="over" label="Overstayed" value={os.over} tone={os.over>0?'red':'green'} hint=">28d" />
-        <Tile id="crit" label="Critically overstayed" value={os.crit} tone={os.crit>0?'red':'green'} hint=">35d" />
-        <Tile id="short" label="Undermanned platforms" value={base.filter(p=>rasFor(p,open.filter(l=>l.platform_id===p.id),operators).tShort>0).length} tone={totShort>0?'red':'green'} />
+        <Stat label="Total on board" value={totAct} tone="amber" />
+        <Stat label="Crane Operator" value={coCount} tone="amber" />
+        <Stat label="Crane Maintenance" value={maintCount} tone="teal" hint={`${ctCount} CT · ${supCount} SUP`} />
+        <Stat label="Overstayed" value={os.over} tone={os.over>0?'red':'green'} hint=">28d" />
+        <Stat label="Critically overstayed" value={os.crit} tone={os.crit>0?'red':'green'} hint=">35d" />
+        <Stat label="Undermanned platforms" value={underCount} tone={underCount>0?'red':'green'} />
       </div>
 
       {/* platform filter */}
@@ -298,13 +284,9 @@ function AdminDashboard({ platforms, operators, logs, onOpen }) {
         ))}
       </div>
 
-      <div className="section-head">
-        Platform breakdown
-        <span className="muted"> — {tileFilter ? `filtered by "${tileFilter}" · click tile again to clear` : 'click a card to open its sheet'}</span>
-      </div>
+      <div className="section-head">Platform breakdown <span className="muted">— click a card to open its sheet</span></div>
       <div className="grid-platforms">
-        {shown.length===0 ? <div className="empty pad">No platforms match this filter.</div> :
-        shown.map(p => {
+        {shown.map(p => {
           const oOpen = open.filter(l => l.platform_id === p.id)
           const ras = rasFor(p, oOpen, operators)
           const mx = oOpen.reduce((m,l)=>Math.max(m,tripDays(l.boarded_at,null)),0)
