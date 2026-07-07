@@ -107,6 +107,7 @@ function ShellApp({ session }) {
   const [platforms, setPlatforms] = useState([])
   const [operators, setOperators] = useState([])
   const [logs, setLogs] = useState([])
+  const [remarks, setRemarks] = useState([])
   const [myInch, setMyInch] = useState([])
   const [isAdmin, setIsAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -115,13 +116,14 @@ function ShellApp({ session }) {
   const [help, setHelp] = useState(false)
 
   const load = useCallback(async () => {
-    const [{ data: p }, { data: o }, { data: l }, { data: inch }] = await Promise.all([
+    const [{ data: p }, { data: o }, { data: l }, { data: inch }, { data: rem }] = await Promise.all([
       supabase.from('platforms').select('*').order('code'),
       supabase.from('operators').select('*').eq('active', true).order('full_name'),
       supabase.from('boarding_logs').select('*').order('boarded_at', { ascending: false }),
       supabase.from('platform_incharges').select('platform_id, is_admin, role').eq('user_id', session.user.id),
+      supabase.from('remarks').select('*').order('created_at', { ascending: false }),
     ])
-    setPlatforms(p||[]); setOperators(o||[]); setLogs(l||[]); setMyInch(inch||[])
+    setPlatforms(p||[]); setOperators(o||[]); setLogs(l||[]); setMyInch(inch||[]); setRemarks(rem||[])
     setIsAdmin((inch||[]).some(r => r.is_admin)); setLoading(false)
   }, [session.user.id])
 
@@ -158,12 +160,16 @@ function ShellApp({ session }) {
           onClick={() => setTab('verifier')}>Manifest Checker</button>
         <button className={tab==='personnel'?'tab is-active':'tab'}
           onClick={() => setTab('personnel')}>Crane team {operators.length?`· ${operators.length}`:''}</button>
+        {isAdmin && <button className={tab==='remarks'?'tab is-active':'tab'}
+          onClick={() => setTab('remarks')}>Remarks {remarks.filter(r=>r.is_safety).length?`· ${remarks.filter(r=>r.is_safety).length}⚠`:''}</button>}
       </nav>
 
       <main className="main">
         {loading ? <div className="pulse-dot" /> :
           tab === 'verifier'
-            ? <VerifierTab operators={operators} logs={logs} platforms={platforms} />
+            ? <VerifierTab operators={operators} logs={logs} platforms={platforms} remarks={remarks} />
+          : tab === 'remarks' && isAdmin
+            ? <RemarksTab operators={operators} remarks={remarks} logs={logs} platforms={platforms} session={session} reload={load} />
           : tab === 'personnel'
             ? <PersonnelTab operators={operators} logs={logs} reload={load} isAdmin={isAdmin} platforms={platforms} />
           : tab === 'dashboard' && isAdmin
@@ -391,12 +397,16 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
     return true
   })
 
-  const doDeboard = async (log_id, ymd, remark) => {
+  const doDeboard = async (log_id, ymd, remark, isSafety) => {
     const log = platLogs.find(l => l.id === log_id)
     if (dOnly(ymd) < dOnly(log.boarded_at)) { alert('Deboard date cannot be before the boarding date.'); return }
     const { error } = await supabase.from('boarding_logs')
-      .update({ deboarded_at: pickedToISO(ymd), deboarded_by: session.user.id, remark: remark?.trim() || null }).eq('id', log_id)
-    if (error) alert(error.message)
+      .update({ deboarded_at: pickedToISO(ymd), deboarded_by: session.user.id }).eq('id', log_id)
+    if (error) { alert(error.message); return }
+    if (remark?.trim()) {
+      await supabase.from('remarks').insert({
+        operator_id: log.operator_id, log_id, text: remark.trim(), is_safety: !!isSafety, created_by: session.user.id })
+    }
     setDeboardLog(null); reload()
   }
   const doBoard = async (operator_id, ymd) => {
@@ -640,7 +650,8 @@ function BoardModal({ platform, operators, logs, onClose, onBoard, onBoardDNF })
 function DeboardModal({ log, operator, onClose, onConfirm }) {
   const minDate = new Date(log.boarded_at).toLocaleDateString('en-CA',{timeZone:IST})
   const [ymd, setYmd] = useState(todayISO())
-  const [remark, setRemark] = useState(log.remark || '')
+  const [remark, setRemark] = useState('')
+  const [isSafety, setIsSafety] = useState(false)
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={e=>e.stopPropagation()}>
@@ -649,11 +660,17 @@ function DeboardModal({ log, operator, onClose, onConfirm }) {
         <p className="muted small">Boarded on {fmtDate(log.boarded_at)}. Choose the deboard date.</p>
         <label className="field"><span>Deboard date</span>
           <input type="date" value={ymd} min={minDate} max={todayISO()} onChange={e=>setYmd(e.target.value)} /></label>
-        <label className="field"><span>Remark / reason <em>(optional — note any safety concern)</em></span>
+        <label className="field"><span>Remark / reason <em>(optional)</em></span>
           <input value={remark} onChange={e=>setRemark(e.target.value)} placeholder="e.g. unsafe handling, SOW deviation…" /></label>
+        {remark.trim() && (
+          <label className="check-row">
+            <input type="checkbox" checked={isSafety} onChange={e=>setIsSafety(e.target.checked)} />
+            <span>Mark as <b>safety violation</b> (shows as a warning in Manifest Checker)</span>
+          </label>
+        )}
         <div className="modal-actions">
           <button className="btn btn--ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn--primary" onClick={()=>onConfirm(log.id, ymd, remark)}>Confirm deboard</button>
+          <button className="btn btn--primary" onClick={()=>onConfirm(log.id, ymd, remark, isSafety)}>Confirm deboard</button>
         </div>
       </div>
     </div>
@@ -975,10 +992,12 @@ function DnfApproveModal({ op, onClose, reload }) {
 
 /* ============================================================ VERIFIER (rest-period check) */
 const MIN_REST_DAYS = 28
-function VerifierTab({ operators, logs, platforms }) {
+function VerifierTab({ operators, logs, platforms, remarks }) {
   const [q, setQ] = useState('')
   const [histFor, setHistFor] = useState(null)   // operator id with history expanded
   const pById = Object.fromEntries(platforms.map(p => [p.id, p]))
+  const remByOp = {}
+  ;(remarks||[]).forEach(r => { (remByOp[r.operator_id] ||= []).push(r) })
 
   const results = operators
     .filter(o => q.trim() && `${o.full_name} ${o.ned_pass_no||''} ${o.emp_code||''}`.toLowerCase().includes(q.trim().toLowerCase()))
@@ -993,12 +1012,13 @@ function VerifierTab({ operators, logs, platforms }) {
       if (onboardNow) state = 'onboard'
       else if (!closed) state = 'never'
       else {
-        restNeeded = tripDays(closed.boarded_at, closed.deboarded_at)  // = last shift length
+        restNeeded = tripDays(closed.boarded_at, closed.deboarded_at)
         daysSince = Math.round((dOnly(new Date()) - dOnly(closed.deboarded_at)) / 86400000)
         state = daysSince >= restNeeded ? 'eligible' : 'resting'
       }
-      const warnings = opLogs.filter(l => l.remark && String(l.remark).trim())
-      return { o, state, daysSince, restNeeded, onboardNow, closed, opLogs, warnings }
+      const allRem = remByOp[o.id] || []
+      const warnings = allRem.filter(r => r.is_safety)   // only safety = warning
+      return { o, state, daysSince, restNeeded, onboardNow, closed, opLogs, warnings, allRem }
     })
 
   return (
@@ -1045,12 +1065,15 @@ function VerifierTab({ operators, logs, platforms }) {
 
                     {warnings.length>0 && (
                       <div className="warn-strip">
-                        <div className="warn-strip__head">⚠ {warnings.length} safety remark{warnings.length>1?'s':''} on record</div>
-                        <ul>{warnings.map(w => (
-                          <li key={w.id}><span className="warn-plat tnum">{pById[w.platform_id]?.code}</span>
-                            <span className="warn-date tnum">{fmtDate(w.deboarded_at||w.boarded_at)}</span>
-                            <span className="warn-text">{w.remark}</span></li>
-                        ))}</ul>
+                        <div className="warn-strip__head">⚠ {warnings.length} safety violation{warnings.length>1?'s':''} on record</div>
+                        <ul>{warnings.map(w => {
+                          const wl = w.log_id ? opLogs.find(l=>l.id===w.log_id) : null
+                          return (
+                            <li key={w.id}><span className="warn-plat tnum">{wl?pById[wl.platform_id]?.code:'—'}</span>
+                              <span className="warn-date tnum">{fmtDate(w.created_at)}</span>
+                              <span className="warn-text">{w.text}</span></li>
+                          )
+                        })}</ul>
                         <button className="hist-toggle" onClick={()=>setHistFor(histFor===o.id?null:o.id)}>
                           {histFor===o.id?'Hide full history ▴':'View full history ▾'}</button>
                       </div>
@@ -1066,14 +1089,19 @@ function VerifierTab({ operators, logs, platforms }) {
                         <table className="ledger ledger--compact">
                           <thead><tr><th>Platform</th><th>Boarded</th><th>Deboarded</th><th className="ta-r">Days</th><th>Remark</th></tr></thead>
                           <tbody>
-                            {opLogs.map(l => (
-                              <tr key={l.id} className={l.remark?'row-warn':(!l.deboarded_at?'row-on':'')}>
+                            {opLogs.map(l => {
+                              const lr = allRem.filter(r => r.log_id === l.id)
+                              return (
+                              <tr key={l.id} className={lr.some(r=>r.is_safety)?'row-warn':(!l.deboarded_at?'row-on':'')}>
                                 <td className="tnum">{pById[l.platform_id]?.code||'—'}</td>
                                 <td className="tnum">{fmtDate(l.boarded_at)}</td>
                                 <td className="tnum">{l.deboarded_at?fmtDate(l.deboarded_at):'On board'}</td>
                                 <td className="ta-r tnum days-cell">{tripDays(l.boarded_at,l.deboarded_at)}</td>
-                                <td className="hist-remark">{l.remark ? <span className="warn-inline">⚠ {l.remark}</span> : '—'}</td>
-                              </tr>))}
+                                <td className="hist-remark">{lr.length
+                                  ? lr.map(r=><div key={r.id} className={r.is_safety?'warn-inline':'note-inline'}>{r.is_safety?'⚠ ':'• '}{r.text}</div>)
+                                  : '—'}</td>
+                              </tr>)
+                            })}
                             <tr className="hist-total">
                               <td colSpan={3}>Total days across all trips</td>
                               <td className="ta-r tnum days-cell">{opLogs.reduce((s,l)=>s+tripDays(l.boarded_at,l.deboarded_at),0)}</td>
@@ -1088,6 +1116,137 @@ function VerifierTab({ operators, logs, platforms }) {
               </div>}
         </div>
       )}
+    </div>
+  )
+}
+
+/* ============================================================ REMARKS ADMIN (PC/admin) */
+function RemarksTab({ operators, remarks, logs, platforms, session, reload }) {
+  const [q, setQ] = useState('')
+  const [filter, setFilter] = useState('all')  // all | safety | note
+  const [adding, setAdding] = useState(false)
+  const [edit, setEdit] = useState(null)
+  const opById = Object.fromEntries(operators.map(o => [o.id, o]))
+  const pById = Object.fromEntries(platforms.map(p => [p.id, p]))
+
+  const rows = (remarks||[])
+    .filter(r => filter==='all' || (filter==='safety'? r.is_safety : !r.is_safety))
+    .filter(r => {
+      if (!q.trim()) return true
+      const o = opById[r.operator_id]
+      return `${o?.full_name||''} ${o?.ned_pass_no||''} ${r.text}`.toLowerCase().includes(q.trim().toLowerCase())
+    })
+
+  const del = async (r) => {
+    if (!confirm('Delete this remark?')) return
+    const { error } = await supabase.from('remarks').delete().eq('id', r.id)
+    if (error) alert(error.message); reload()
+  }
+
+  const safetyCount = (remarks||[]).filter(r=>r.is_safety).length
+
+  return (
+    <div className="stack">
+      <div className="col">
+        <div className="col-head-row">
+          <div className="col-head">Remarks &amp; safety flags · {remarks?.length||0} <span className="muted">({safetyCount} safety)</span></div>
+          <button className="btn btn--primary btn--xs" onClick={()=>setAdding(true)}>+ Add remark</button>
+        </div>
+        <div className="roster-filters">
+          <div className="seg">
+            {[['all','All'],['safety','⚠ Safety'],['note','Notes']].map(([v,l]) => (
+              <button key={v} className={filter===v?'seg-btn is-on':'seg-btn'} onClick={()=>setFilter(v)}>{l}</button>))}
+          </div>
+          <input className="search search--sm" placeholder="Search person / NED / text…" value={q} onChange={e=>setQ(e.target.value)} />
+        </div>
+        <div className="table-wrap"><table className="ledger">
+          <thead><tr><th>Person</th><th>NED</th><th>Type</th><th>Remark</th><th>Added</th><th></th></tr></thead>
+          <tbody>
+            {rows.length===0 ? <tr><td colSpan={6} className="empty pad">No remarks match.</td></tr> :
+            rows.map(r => { const o=opById[r.operator_id]; return (
+              <tr key={r.id} className={r.is_safety?'row-warn':''}>
+                <td className="op-name">{o?.full_name||'—'}</td>
+                <td className="tnum muted">{o?.ned_pass_no||'—'}</td>
+                <td>{r.is_safety
+                  ? <span className="warn-badge">⚠ Safety</span>
+                  : <span className="status-tag">Note</span>}</td>
+                <td>{r.text}</td>
+                <td className="tnum muted">{fmtDate(r.created_at)}</td>
+                <td><div className="roster-actions">
+                  <button className="btn--icon" onClick={()=>setEdit(r)}>Edit</button>
+                  <button className="btn--icon btn--icon-danger" onClick={()=>del(r)}>Delete</button>
+                </div></td>
+              </tr>)})}
+          </tbody>
+        </table></div>
+      </div>
+
+      {adding && <RemarkModal operators={operators} session={session} onClose={()=>setAdding(false)} reload={reload} />}
+      {edit && <RemarkModal remark={edit} operators={operators} session={session} onClose={()=>setEdit(null)} reload={reload} />}
+    </div>
+  )
+}
+
+function RemarkModal({ remark, operators, session, onClose, reload }) {
+  const editing = !!remark
+  const [opId, setOpId] = useState(remark?.operator_id || '')
+  const [text, setText] = useState(remark?.text || '')
+  const [isSafety, setIsSafety] = useState(remark?.is_safety || false)
+  const [q, setQ] = useState('')
+  const [busy, setBusy] = useState(false), [err, setErr] = useState('')
+
+  const matches = q.trim()
+    ? operators.filter(o => `${o.full_name} ${o.ned_pass_no||''}`.toLowerCase().includes(q.trim().toLowerCase())).slice(0,8)
+    : []
+
+  const save = async () => {
+    setErr(''); if (!opId || !text.trim()) { setErr('Select a person and enter the remark.'); return }
+    setBusy(true)
+    const payload = { operator_id: opId, text: text.trim(), is_safety: isSafety }
+    const { error } = editing
+      ? await supabase.from('remarks').update(payload).eq('id', remark.id)
+      : await supabase.from('remarks').insert({ ...payload, created_by: session.user.id })
+    setBusy(false)
+    if (error) { setErr(error.message); return }
+    onClose(); reload()
+  }
+  const selName = operators.find(o=>o.id===opId)
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <div className="modal-head"><div><div className="eyebrow">{editing?'Edit remark':'New remark'}</div>
+          <h3>{editing?selName?.full_name:'Add to person'}</h3></div><button className="x" onClick={onClose}>×</button></div>
+
+        {!editing && (
+          <label className="field"><span>Person</span>
+            {opId ? <div className="picked-row"><span className="op-name">{selName?.full_name}</span>
+              <span className="op-sub muted tnum">NED {selName?.ned_pass_no}</span>
+              <button className="btn--icon" onClick={()=>{setOpId(''); setQ('')}}>Change</button></div>
+            : <>
+              <input className="search" placeholder="Search name / NED…" value={q} onChange={e=>setQ(e.target.value)} />
+              {matches.length>0 && <div className="board-list" style={{marginTop:'8px',maxHeight:'180px'}}>
+                {matches.map(o=>(
+                  <button key={o.id} className="board-row" onClick={()=>{setOpId(o.id); setQ('')}}>
+                    <span className={`desig desig--${o.designation}`}>{o.designation}</span>
+                    <span className="op-name">{o.full_name}</span>
+                    <span className="op-sub muted tnum">NED {o.ned_pass_no}</span></button>))}
+              </div>}
+            </>}
+          </label>
+        )}
+
+        <label className="field"><span>Remark</span>
+          <input value={text} onChange={e=>setText(e.target.value)} placeholder="Describe the remark…" /></label>
+        <label className="check-row">
+          <input type="checkbox" checked={isSafety} onChange={e=>setIsSafety(e.target.checked)} />
+          <span>Mark as <b>safety violation</b> (raises a warning in Manifest Checker)</span></label>
+        {err && <div className="err">{err}</div>}
+        <div className="modal-actions">
+          <button className="btn btn--ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn--primary" disabled={busy} onClick={save}>{busy?'Saving…':editing?'Save':'Add remark'}</button>
+        </div>
+      </div>
     </div>
   )
 }

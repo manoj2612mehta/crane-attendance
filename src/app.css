@@ -635,3 +635,13 @@ code { background: var(--teal-tint); padding: 2px 6px; border-radius: 5px; font-
   border-top: 1px solid var(--line); padding-top: 12px; }
 .pc-updated { font-size: 11.5px; color: var(--ink-faint); }
 .pc-foot .pc-open { border-top: none; padding-top: 0; }
+
+/* ============ REMARK ADMIN ============ */
+.check-row { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--ink-soft);
+  margin-bottom: 16px; cursor: pointer; }
+.check-row input { width: 16px; height: 16px; accent-color: var(--red); }
+.check-row b { color: var(--red); }
+.picked-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--paper); }
+.picked-row .op-sub { flex: 1; margin: 0; }
+.note-inline { color: var(--ink-soft); }
