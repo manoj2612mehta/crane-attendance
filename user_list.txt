@@ -1,0 +1,36 @@
+ALL 33 USERS — create in Supabase → Authentication → Add user (tick Auto Confirm)
+Password for ALL: Ongc@1234
+
+project_coordinator@xyz.com
+b-193_icm@xyz.com
+b-193_view@xyz.com
+bhs_icm@xyz.com
+bhs_view@xyz.com
+bpa_icm@xyz.com
+bpa_view@xyz.com
+bpb_icm@xyz.com
+bpb_view@xyz.com
+heera_icm@xyz.com
+heera_view@xyz.com
+icp_icm@xyz.com
+icp_view@xyz.com
+mhn_icm@xyz.com
+mhn_view@xyz.com
+nbp_icm@xyz.com
+nbp_view@xyz.com
+neelam_icm@xyz.com
+neelam_view@xyz.com
+nqo_icm@xyz.com
+nqo_view@xyz.com
+panna_icm@xyz.com
+panna_view@xyz.com
+ratna_icm@xyz.com
+ratna_view@xyz.com
+sca_icm@xyz.com
+sca_view@xyz.com
+shp_icm@xyz.com
+shp_view@xyz.com
+tapti_icm@xyz.com
+tapti_view@xyz.com
+win_icm@xyz.com
+win_view@xyz.com

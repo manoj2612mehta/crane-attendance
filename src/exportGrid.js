@@ -45,7 +45,19 @@ export function exportMonthlyGrid({ platform, operators, logs, year, month /* 0-
   const aoa = []
   // title rows
   aoa.push([`${platform.name} (${platform.code}) — Attendance ${monthName} ${year}`])
-  aoa.push([]) // spacer
+  aoa.push([])
+
+  // Required / Actual / Shortage (as of export time — current onboard)
+  const openNow = platLogs.filter(l => !l.deboarded_at)
+  const act = { CO: 0, CT: 0, SUP: 0 }
+  openNow.forEach(l => { const d = opById[l.operator_id]?.designation; if (act[d] !== undefined) act[d]++ })
+  const req = { CO: platform.required_co||0, CT: platform.required_ct||0, SUP: platform.required_sup||0 }
+  aoa.push(['MANPOWER STATUS (as of export)', '', 'CO', 'CT', 'SUP', 'Total'])
+  aoa.push(['Required', '', req.CO, req.CT, req.SUP, req.CO+req.CT+req.SUP])
+  aoa.push(['Actual on board', '', act.CO, act.CT, act.SUP, act.CO+act.CT+act.SUP])
+  aoa.push(['Shortage', '', Math.max(0,req.CO-act.CO), Math.max(0,req.CT-act.CT), Math.max(0,req.SUP-act.SUP),
+    Math.max(0,(req.CO+req.CT+req.SUP)-(act.CO+act.CT+act.SUP))])
+  aoa.push([])
 
   const header = ['Team', 'Personnel', 'Emp Code', 'Desig', 'NED Pass']
   for (let d = 1; d <= daysInMonth; d++) header.push(String(d))

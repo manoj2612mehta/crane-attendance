@@ -195,47 +195,86 @@ function teamStats(openLogs, operators, team) {
   const items = openLogs.filter(l => teamOf(opById[l.operator_id]?.designation) === team)
   const count = items.length
   const max = items.reduce((m,l)=>Math.max(m, tripDays(l.boarded_at,null)),0)
-  const avg = count ? Math.round(items.reduce((s,l)=>s+tripDays(l.boarded_at,null),0)/count) : 0
-  return { count, max, avg }
+  return { count, max }
+}
+/* actual on-board count per designation for a set of open logs */
+function actualByDesig(openLogs, operators) {
+  const opById = Object.fromEntries(operators.map(o => [o.id, o]))
+  const a = { CO: 0, CT: 0, SUP: 0 }
+  openLogs.forEach(l => { const d = opById[l.operator_id]?.designation; if (a[d] !== undefined) a[d]++ })
+  return a
+}
+/* required/actual/shortage matrix for one platform (or totals) */
+function rasFor(platform, openLogs, operators) {
+  const a = actualByDesig(openLogs, operators)
+  const req = { CO: platform?.required_co||0, CT: platform?.required_ct||0, SUP: platform?.required_sup||0 }
+  const short = { CO: Math.max(0, req.CO-a.CO), CT: Math.max(0, req.CT-a.CT), SUP: Math.max(0, req.SUP-a.SUP) }
+  const tReq = req.CO+req.CT+req.SUP, tAct = a.CO+a.CT+a.SUP
+  return { req, act: a, short, tReq, tAct, tShort: Math.max(0, tReq-tAct) }
 }
 
 /* ============================================================ ADMIN DASHBOARD */
 function AdminDashboard({ platforms, operators, logs, onOpen }) {
   const open = logs.filter(l => !l.deboarded_at)
   const opById = Object.fromEntries(operators.map(o => [o.id, o]))
-  const opStats = teamStats(open, operators, 'operation')
-  const mtStats = teamStats(open, operators, 'maintenance')
+  const [platFilter, setPlatFilter] = useState([])   // empty = all
+  const togglePlat = (id) => setPlatFilter(f => f.includes(id) ? f.filter(x=>x!==id) : [...f, id])
+  const shown = platFilter.length ? platforms.filter(p => platFilter.includes(p.id)) : platforms
+
+  // fleet totals across SHOWN platforms
+  const shownIds = new Set(shown.map(p=>p.id))
+  const openShown = open.filter(l => shownIds.has(l.platform_id))
+  const totReq = shown.reduce((s,p)=>s+(p.required_co||0)+(p.required_ct||0)+(p.required_sup||0),0)
+  const totAct = openShown.length
+  const totShort = Math.max(0, totReq-totAct)
+  const maxDays = openShown.reduce((m,l)=>Math.max(m,tripDays(l.boarded_at,null)),0)
+  const overstays = openShown.filter(l=>tripDays(l.boarded_at,null)>28).length
 
   return (
     <div className="stack">
       <div className="tally tally--4">
-        <TallyCard label="Platforms" value={platforms.length} tone="teal" />
-        <TallyCard label="Total onboard" value={open.length} tone="amber" />
-        <TallyCard label="Crane Operator onboard" value={opStats.count} unit="" tone="amber" />
-        <TallyCard label="Crane Maintenance onboard" value={mtStats.count} unit="" tone="green" />
+        <TallyCard label="Required (contract)" value={totReq} tone="teal" />
+        <TallyCard label="Actual on board" value={totAct} tone="green" />
+        <TallyCard label="Shortage" value={totShort} tone={totShort>0?'red':'green'} />
+        <TallyCard label="Max days on board" value={maxDays} unit="days" tone={maxDays>28?'red':'amber'}
+          hint={overstays>0?`${overstays} over 28d`:undefined} />
       </div>
 
-      <div className="team-grid">
-        <TeamBlock title="Crane Operator" tone="amber" s={opStats} onClick={() => {}} />
-        <TeamBlock title="Crane Maintenance" tone="teal" s={mtStats} onClick={() => {}} sub="CT + Supervisor" />
+      {/* platform filter */}
+      <div className="plat-filter">
+        <button className={platFilter.length===0?'pill is-active':'pill'} onClick={()=>setPlatFilter([])}>All · {platforms.length}</button>
+        {platforms.map(p => (
+          <button key={p.id} className={platFilter.includes(p.id)?'pill is-active':'pill'}
+            onClick={()=>togglePlat(p.id)}>{p.code}</button>
+        ))}
       </div>
 
-      <div className="section-head">Platform breakdown <span className="muted">— click to open the sheet</span></div>
+      <div className="section-head">Platform breakdown <span className="muted">— click a card to open its sheet</span></div>
       <div className="grid-platforms">
-        {platforms.map(p => {
+        {shown.map(p => {
           const oOpen = open.filter(l => l.platform_id === p.id)
-          const co = oOpen.filter(l => teamOf(opById[l.operator_id]?.designation)==='operation').length
-          const mt = oOpen.filter(l => teamOf(opById[l.operator_id]?.designation)==='maintenance').length
+          const ras = rasFor(p, oOpen, operators)
           const mx = oOpen.reduce((m,l)=>Math.max(m,tripDays(l.boarded_at,null)),0)
+          const over = oOpen.some(l=>tripDays(l.boarded_at,null)>28)
           return (
-            <button className="platform-card platform-card--btn" key={p.id} onClick={() => onOpen(p.id)}>
+            <button className={`platform-card platform-card--btn${ras.tShort>0?' platform-card--short':''}`}
+              key={p.id} onClick={() => onOpen(p.id)}>
               <div className="platform-card__head">
                 <div><div className="platform-code tnum">{p.code}</div><div className="platform-name">{p.name}</div></div>
-                <div className="asset-chip">{p.asset || '—'}</div></div>
+                {ras.tShort>0
+                  ? <div className="short-chip">−{ras.tShort} short</div>
+                  : <div className="ok-chip">Full</div>}
+              </div>
+              <div className="ras-mini tnum">
+                <div className="ras-mini__col"><span className="rm-n">{ras.tReq}</span><span className="rm-l">Required</span></div>
+                <div className="ras-mini__col"><span className="rm-n rm-n--act">{ras.tAct}</span><span className="rm-l">Actual</span></div>
+                <div className="ras-mini__col"><span className={ras.tShort>0?'rm-n rm-n--short':'rm-n rm-n--ok'}>{ras.tShort}</span><span className="rm-l">Shortage</span></div>
+              </div>
               <div className="pc-team-row">
-                <span className="pc-pill pc-pill--amber">CO {co}</span>
-                <span className="pc-pill pc-pill--teal">Maint {mt}</span>
-                <span className="pc-pill pc-pill--muted">max {mx}d</span>
+                <span className="pc-pill pc-pill--amber">CO {ras.act.CO}/{ras.req.CO}</span>
+                <span className="pc-pill pc-pill--teal">CT {ras.act.CT}/{ras.req.CT}</span>
+                <span className="pc-pill pc-pill--teal">SUP {ras.act.SUP}/{ras.req.SUP}</span>
+                <span className={over?'pc-pill pc-pill--red':'pc-pill pc-pill--muted'}>max {mx}d</span>
               </div>
               <div className="pc-open">Open sheet →</div>
             </button>
@@ -350,6 +389,9 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
         </div>
       </div>
 
+      {/* required / actual / shortage */}
+      <RasBar ras={rasFor(platform, openHere, operators)} />
+
       {/* team stat blocks */}
       <div className="team-grid">
         <TeamBlock title="Crane Operator" tone="amber" s={opStats}
@@ -424,11 +466,48 @@ function TeamBlock({ title, tone, s, onClick, sub }) {
   return (
     <div className={`team-block team-block--${tone}`}>
       <div className="team-head">{title}{sub && <span className="team-sub">{sub}</span>}</div>
-      <div className="team-stats">
+      <div className="team-stats team-stats--2">
         <button className="team-stat team-stat--btn" onClick={onClick}>
-          <span className="ts-val tnum">{s.count}</span><span className="ts-lbl">onboard now</span></button>
-        <div className="team-stat"><span className="ts-val tnum">{s.max}</span><span className="ts-lbl">max days</span></div>
-        <div className="team-stat"><span className="ts-val tnum">{s.avg}</span><span className="ts-lbl">avg days</span></div>
+          <span className="ts-val tnum">{s.count}</span><span className="ts-lbl">on board now</span></button>
+        <div className="team-stat"><span className={s.max>28?'ts-val tnum ts-val--red':'ts-val tnum'}>{s.max}</span>
+          <span className="ts-lbl">max days{s.max>28?' · over 28!':''}</span></div>
+      </div>
+    </div>
+  )
+}
+
+/* Required / Actual / Shortage bar for a platform */
+function RasBar({ ras }) {
+  const Cell = ({ d }) => (
+    <div className="ras-cell">
+      <div className="ras-cell__d">{d}</div>
+      <div className="ras-cell__nums tnum">
+        <span title="Required">{ras.req[d]}</span>
+        <span className="ras-sep">/</span>
+        <span className="ras-act" title="Actual">{ras.act[d]}</span>
+        <span className="ras-sep">/</span>
+        <span className={ras.short[d]>0?'ras-short':'ras-ok'} title="Shortage">{ras.short[d]}</span>
+      </div>
+    </div>
+  )
+  return (
+    <div className={`ras-bar${ras.tShort>0?' ras-bar--short':''}`}>
+      <div className="ras-bar__head">
+        <span className="ras-bar__title">Manpower · Required / Actual / Shortage</span>
+        {ras.tShort>0
+          ? <span className="short-chip">−{ras.tShort} short overall</span>
+          : <span className="ok-chip">Fully manned</span>}
+      </div>
+      <div className="ras-bar__grid">
+        <Cell d="CO" /><Cell d="CT" /><Cell d="SUP" />
+        <div className="ras-cell ras-cell--total">
+          <div className="ras-cell__d">Total</div>
+          <div className="ras-cell__nums tnum">
+            <span>{ras.tReq}</span><span className="ras-sep">/</span>
+            <span className="ras-act">{ras.tAct}</span><span className="ras-sep">/</span>
+            <span className={ras.tShort>0?'ras-short':'ras-ok'}>{ras.tShort}</span>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -779,26 +858,26 @@ function DnfApproveModal({ op, onClose, reload }) {
 const MIN_REST_DAYS = 28
 function VerifierTab({ operators, logs, platforms }) {
   const [q, setQ] = useState('')
+  const [histFor, setHistFor] = useState(null)   // operator id with history expanded
   const pById = Object.fromEntries(platforms.map(p => [p.id, p]))
 
   const results = operators
     .filter(o => q.trim() && `${o.full_name} ${o.ned_pass_no||''} ${o.emp_code||''}`.toLowerCase().includes(q.trim().toLowerCase()))
+    .slice(0, 12)
     .map(o => {
       const opLogs = logs.filter(l => l.operator_id === o.id)
+        .sort((a,b) => new Date(b.boarded_at) - new Date(a.boarded_at))
       const onboardNow = opLogs.find(l => !l.deboarded_at)
-      // most recent completed deboard
       const closed = opLogs.filter(l => l.deboarded_at)
         .sort((a,b) => new Date(b.deboarded_at) - new Date(a.deboarded_at))[0]
-      let state, daysSince = null, lastDate = null, lastPlatform = null
-      if (onboardNow) { state = 'onboard'; lastPlatform = pById[onboardNow.platform_id]?.code }
-      else if (!closed) { state = 'never' }
+      let state, daysSince = null
+      if (onboardNow) state = 'onboard'
+      else if (!closed) state = 'never'
       else {
-        lastDate = closed.deboarded_at
-        lastPlatform = pById[closed.platform_id]?.code
         daysSince = Math.round((dOnly(new Date()) - dOnly(closed.deboarded_at)) / 86400000)
         state = daysSince >= MIN_REST_DAYS ? 'eligible' : 'resting'
       }
-      return { o, state, daysSince, lastDate, lastPlatform }
+      return { o, state, daysSince, onboardNow, closed, opLogs }
     })
 
   return (
@@ -809,7 +888,7 @@ function VerifierTab({ operators, logs, platforms }) {
           Minimum {MIN_REST_DAYS} days rest required after deboarding before a person can be reboarded.
           Search by name or NED pass number.</p>
         <input className="search" autoFocus placeholder="Search name or NED pass number…"
-          value={q} onChange={e=>setQ(e.target.value)} />
+          value={q} onChange={e=>{setQ(e.target.value); setHistFor(null)}} />
       </div>
 
       {q.trim() && (
@@ -817,27 +896,56 @@ function VerifierTab({ operators, logs, platforms }) {
           {results.length === 0
             ? <div className="empty pad">No personnel match “{q}”.</div>
             : <div className="verify-list">
-                {results.map(({ o, state, daysSince, lastDate, lastPlatform }) => (
-                  <div key={o.id} className={`verify-card verify-card--${state}`}>
-                    <div className="verify-main">
-                      <div className="verify-name">{o.full_name}
-                        <span className={`desig desig--${o.designation}`}>{o.designation}</span></div>
-                      <div className="op-sub muted tnum">NED {o.ned_pass_no}{o.emp_code?` · ${o.emp_code}`:''}</div>
+                {results.map(({ o, state, daysSince, onboardNow, closed, opLogs }) => (
+                  <div key={o.id} className={`verify-card verify-card--${state} verify-card--stack`}>
+                    <div className="verify-row">
+                      <div className="verify-main">
+                        <div className="verify-name">{o.full_name}
+                          <span className={`desig desig--${o.designation}`}>{o.designation}</span>
+                          {o.is_dnf && <span className="dnf-badge">DNF</span>}</div>
+                        <div className="op-sub muted tnum">NED {o.ned_pass_no}{o.emp_code?` · ${o.emp_code}`:''}</div>
+                      </div>
+                      <div className="verify-body">
+                        {state==='onboard' && <>
+                          <div className="verify-badge vb-onboard">On board · {tripDays(onboardNow.boarded_at,null)} days</div>
+                          <div className="verify-note">On <b>{pById[onboardNow.platform_id]?.code}</b> since {fmtDate(onboardNow.boarded_at)}.</div></>}
+                        {state==='never' && <>
+                          <div className="verify-badge vb-neutral">No prior trip</div>
+                          <div className="verify-note">No boarding record. Eligible to board.</div></>}
+                        {state==='eligible' && <>
+                          <div className="verify-badge vb-eligible">Eligible · {daysSince} days rested</div>
+                          <div className="verify-note">Deboarded <b>{pById[closed.platform_id]?.code}</b> on {fmtDate(closed.deboarded_at)} · shift was {tripDays(closed.boarded_at, closed.deboarded_at)} days.</div></>}
+                        {state==='resting' && <>
+                          <div className="verify-badge vb-resting">Not yet · {daysSince} / {MIN_REST_DAYS} days</div>
+                          <div className="verify-note">Deboarded <b>{pById[closed.platform_id]?.code}</b> on {fmtDate(closed.deboarded_at)} · shift was {tripDays(closed.boarded_at, closed.deboarded_at)} days · {MIN_REST_DAYS - daysSince} more days needed.</div></>}
+                      </div>
                     </div>
-                    <div className="verify-body">
-                      {state==='onboard' && <>
-                        <div className="verify-badge vb-onboard">Currently onboard</div>
-                        <div className="verify-note">On {lastPlatform} now — not deboarded yet.</div></>}
-                      {state==='never' && <>
-                        <div className="verify-badge vb-neutral">No prior deboarding</div>
-                        <div className="verify-note">No completed trip on record. Eligible to board.</div></>}
-                      {state==='eligible' && <>
-                        <div className="verify-badge vb-eligible">Eligible · {daysSince} days rested</div>
-                        <div className="verify-note">Last deboarded {fmtDate(lastDate)} from {lastPlatform}.</div></>}
-                      {state==='resting' && <>
-                        <div className="verify-badge vb-resting">Not yet · {daysSince} / {MIN_REST_DAYS} days</div>
-                        <div className="verify-note">Last deboarded {fmtDate(lastDate)} from {lastPlatform}. {MIN_REST_DAYS - daysSince} more days needed.</div></>}
-                    </div>
+
+                    {opLogs.length > 0 && (
+                      <button className="hist-toggle" onClick={()=>setHistFor(histFor===o.id?null:o.id)}>
+                        {histFor===o.id ? 'Hide history ▴' : `History · ${opLogs.length} trip${opLogs.length>1?'s':''} ▾`}
+                      </button>
+                    )}
+                    {histFor===o.id && (
+                      <div className="hist-table">
+                        <table className="ledger ledger--compact">
+                          <thead><tr><th>Platform</th><th>Boarded</th><th>Deboarded</th><th className="ta-r">Days</th></tr></thead>
+                          <tbody>
+                            {opLogs.map(l => (
+                              <tr key={l.id} className={!l.deboarded_at?'row-on':''}>
+                                <td className="tnum">{pById[l.platform_id]?.code||'—'}</td>
+                                <td className="tnum">{fmtDate(l.boarded_at)}</td>
+                                <td className="tnum">{l.deboarded_at?fmtDate(l.deboarded_at):'On board'}</td>
+                                <td className="ta-r tnum days-cell">{tripDays(l.boarded_at,l.deboarded_at)}</td>
+                              </tr>))}
+                            <tr className="hist-total">
+                              <td colSpan={3}>Total days across all trips</td>
+                              <td className="ta-r tnum days-cell">{opLogs.reduce((s,l)=>s+tripDays(l.boarded_at,l.deboarded_at),0)}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>}
