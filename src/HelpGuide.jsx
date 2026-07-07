@@ -15,7 +15,7 @@ const ROLES = [
       'Open any platform sheet and download its monthly Excel',
       'Add crane team personnel — manually or by bulk Excel import',
       'Review and approve DNF (Details Not Found) entries into the master roster',
-      'Check reboarding eligibility in the Rest verifier',
+      'Check reboarding eligibility in the Manifest Checker',
     ],
     cannot: ['Board or deboard personnel — that is the ICM’s job'],
     flow: [
@@ -36,13 +36,13 @@ const ROLES = [
       'Board an unknown person as DNF when they’re not in the master list',
       'Deboard a person and set the exact deboard date',
       'View their platform’s live counts, history, and download monthly Excel',
-      'Use the Rest verifier before reboarding anyone',
+      'Use the Manifest Checker before reboarding anyone',
     ],
     cannot: ['Add or import master personnel', 'Approve DNF entries', 'See other platforms'],
     flow: [
       { t: 'Sign in', d: 'Log in with your platform ICM email.' },
       { t: 'Open My platform', d: 'Land straight on your platform’s sheet.' },
-      { t: 'Check rest first', d: 'Use the Rest verifier — is the person 28-day eligible?' },
+      { t: 'Check rest first', d: 'Use the Manifest Checker — is the person 28-day eligible?' },
       { t: 'Board', d: 'Tap + Board → pick from master, or DNF if not listed → set date.' },
       { t: 'Watch overstays', d: 'Rows onboard over 28 days turn red — plan the rotation.' },
       { t: 'Deboard', d: 'When they leave, tap Deboard and set the departure date.' },
@@ -56,7 +56,7 @@ const ROLES = [
       'View their platform’s live On Board count and full history',
       'Filter and search the attendance table',
       'Download the monthly Excel for their platform',
-      'Use the Rest verifier',
+      'Use the Manifest Checker',
     ],
     cannot: ['Board or deboard', 'Add personnel', 'Approve DNF'],
     flow: [
@@ -71,7 +71,7 @@ const ROLES = [
 const CONCEPTS = [
   { icon: '⚓', title: 'Board & Deboard', body: 'Boarding logs an arrival; deboarding logs a departure. Days onboard are counted automatically from the two dates.' },
   { icon: '❓', title: 'DNF — Details Not Found', body: 'If a person isn’t in the master list, the ICM can still board them with a rough name, NED and designation. The coordinator reviews and approves them later.' },
-  { icon: '🔁', title: '28-day rest rule', body: 'A person needs 28 days off after deboarding before they can be reboarded. The Rest verifier checks this instantly by name or NED.' },
+  { icon: '🔁', title: '28-day rest rule', body: 'Rest required equals the last shift length before a person can be reboarded. The Manifest Checker checks this instantly by name or NED, and flags any safety remarks.' },
   { icon: '📊', title: 'Monthly Excel', body: 'A day-wise grid (✓ on board / ✗ off) for both teams, with total days per person — one sheet per platform, per month.' },
 ]
 

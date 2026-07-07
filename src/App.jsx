@@ -155,7 +155,7 @@ function ShellApp({ session }) {
         {!isAdmin && <button className={tab==='myplatform'?'tab is-active':'tab'}
           onClick={() => setTab('myplatform')}>My platforms {myPlatforms.length?`· ${myPlatforms.length}`:''}</button>}
         <button className={tab==='verifier'?'tab is-active':'tab'}
-          onClick={() => setTab('verifier')}>Rest verifier</button>
+          onClick={() => setTab('verifier')}>Manifest Checker</button>
         <button className={tab==='personnel'?'tab is-active':'tab'}
           onClick={() => setTab('personnel')}>Crane team {operators.length?`· ${operators.length}`:''}</button>
       </nav>
@@ -292,6 +292,11 @@ function AdminDashboard({ platforms, operators, logs, onOpen }) {
           const mx = oOpen.reduce((m,l)=>Math.max(m,tripDays(l.boarded_at,null)),0)
           const over = oOpen.some(l=>tripDays(l.boarded_at,null)>OVERSTAY)
           const crit = oOpen.some(l=>tripDays(l.boarded_at,null)>CRITICAL)
+          const platAll = logs.filter(l => l.platform_id === p.id)
+          const lastTs = platAll.reduce((m,l)=>{
+            const t = Math.max(new Date(l.boarded_at).getTime(), l.deboarded_at?new Date(l.deboarded_at).getTime():0)
+            return Math.max(m, t)
+          }, 0)
           return (
             <button className={`platform-card platform-card--btn${ras.tShort>0?' platform-card--short':''}`}
               key={p.id} onClick={() => onOpen(p.id)}>
@@ -312,7 +317,10 @@ function AdminDashboard({ platforms, operators, logs, onOpen }) {
                 <span className="pc-pill pc-pill--teal">SUP {ras.act.SUP}/{ras.req.SUP}</span>
                 <span className={crit?'pc-pill pc-pill--red':over?'pc-pill pc-pill--amber':'pc-pill pc-pill--muted'}>max {mx}d</span>
               </div>
-              <div className="pc-open">Open sheet →</div>
+              <div className="pc-foot">
+                <span className="pc-updated">{lastTs?`Updated ${fmtDate(new Date(lastTs))}`:'No activity'}</span>
+                <span className="pc-open">Open sheet →</span>
+              </div>
             </button>
           )
         })}
@@ -383,11 +391,11 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
     return true
   })
 
-  const doDeboard = async (log_id, ymd) => {
+  const doDeboard = async (log_id, ymd, remark) => {
     const log = platLogs.find(l => l.id === log_id)
     if (dOnly(ymd) < dOnly(log.boarded_at)) { alert('Deboard date cannot be before the boarding date.'); return }
     const { error } = await supabase.from('boarding_logs')
-      .update({ deboarded_at: pickedToISO(ymd), deboarded_by: session.user.id }).eq('id', log_id)
+      .update({ deboarded_at: pickedToISO(ymd), deboarded_by: session.user.id, remark: remark?.trim() || null }).eq('id', log_id)
     if (error) alert(error.message)
     setDeboardLog(null); reload()
   }
@@ -403,7 +411,10 @@ function PlatformSheet({ platform, operators, logs, session, reload, onBack, can
       full_name: name.trim(), ned_pass_no: ned.trim(), designation: desig || 'CO', is_dnf: true })
       .select().single()
     if (error) {
-      alert(error.message.toLowerCase().includes('ned') ? 'A person with this NED pass already exists in the master. Board them from the list instead.' : error.message)
+      const m = (error.message||'').toLowerCase()
+      alert(m.includes('ned') || m.includes('duplicate') || m.includes('unique')
+        ? `NED ${ned.trim()} already exists in the roster. This person is already registered — board them from the master list instead.`
+        : error.message)
       return
     }
     const { error: e2 } = await supabase.from('boarding_logs').insert({
@@ -629,6 +640,7 @@ function BoardModal({ platform, operators, logs, onClose, onBoard, onBoardDNF })
 function DeboardModal({ log, operator, onClose, onConfirm }) {
   const minDate = new Date(log.boarded_at).toLocaleDateString('en-CA',{timeZone:IST})
   const [ymd, setYmd] = useState(todayISO())
+  const [remark, setRemark] = useState(log.remark || '')
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={e=>e.stopPropagation()}>
@@ -637,9 +649,11 @@ function DeboardModal({ log, operator, onClose, onConfirm }) {
         <p className="muted small">Boarded on {fmtDate(log.boarded_at)}. Choose the deboard date.</p>
         <label className="field"><span>Deboard date</span>
           <input type="date" value={ymd} min={minDate} max={todayISO()} onChange={e=>setYmd(e.target.value)} /></label>
+        <label className="field"><span>Remark / reason <em>(optional — note any safety concern)</em></span>
+          <input value={remark} onChange={e=>setRemark(e.target.value)} placeholder="e.g. unsafe handling, SOW deviation…" /></label>
         <div className="modal-actions">
           <button className="btn btn--ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn--primary" onClick={()=>onConfirm(log.id, ymd)}>Confirm deboard</button>
+          <button className="btn btn--primary" onClick={()=>onConfirm(log.id, ymd, remark)}>Confirm deboard</button>
         </div>
       </div>
     </div>
@@ -983,15 +997,16 @@ function VerifierTab({ operators, logs, platforms }) {
         daysSince = Math.round((dOnly(new Date()) - dOnly(closed.deboarded_at)) / 86400000)
         state = daysSince >= restNeeded ? 'eligible' : 'resting'
       }
-      return { o, state, daysSince, restNeeded, onboardNow, closed, opLogs }
+      const warnings = opLogs.filter(l => l.remark && String(l.remark).trim())
+      return { o, state, daysSince, restNeeded, onboardNow, closed, opLogs, warnings }
     })
 
   return (
     <div className="stack">
       <div className="col">
-        <div className="col-head">Reboarding eligibility check</div>
+        <div className="col-head">Manifest checker · reboarding eligibility &amp; safety flags</div>
         <p className="muted small" style={{marginTop:'-8px', marginBottom:'14px'}}>
-          Rest required after deboarding equals the length of the last completed shift, before a person can be reboarded.
+          Rest required after deboarding equals the length of the last completed shift. Safety remarks, if any, are flagged.
           Search by name or NED pass number.</p>
         <input className="search" autoFocus placeholder="Search name or NED pass number…"
           value={q} onChange={e=>{setQ(e.target.value); setHistFor(null)}} />
@@ -1002,13 +1017,14 @@ function VerifierTab({ operators, logs, platforms }) {
           {results.length === 0
             ? <div className="empty pad">No personnel match “{q}”.</div>
             : <div className="verify-list">
-                {results.map(({ o, state, daysSince, restNeeded, onboardNow, closed, opLogs }) => (
-                  <div key={o.id} className={`verify-card verify-card--${state} verify-card--stack`}>
+                {results.map(({ o, state, daysSince, restNeeded, onboardNow, closed, opLogs, warnings }) => (
+                  <div key={o.id} className={`verify-card verify-card--${state} verify-card--stack${warnings.length?' verify-card--warn':''}`}>
                     <div className="verify-row">
                       <div className="verify-main">
                         <div className="verify-name">{o.full_name}
                           <span className={`desig desig--${o.designation}`}>{o.designation}</span>
-                          {o.is_dnf && <span className="dnf-badge">DNF</span>}</div>
+                          {o.is_dnf && <span className="dnf-badge">DNF</span>}
+                          {warnings.length>0 && <span className="warn-badge">⚠ Warning: {warnings.length}</span>}</div>
                         <div className="op-sub muted tnum">NED {o.ned_pass_no}{o.emp_code?` · ${o.emp_code}`:''}</div>
                       </div>
                       <div className="verify-body">
@@ -1027,7 +1043,20 @@ function VerifierTab({ operators, logs, platforms }) {
                       </div>
                     </div>
 
-                    {opLogs.length > 0 && (
+                    {warnings.length>0 && (
+                      <div className="warn-strip">
+                        <div className="warn-strip__head">⚠ {warnings.length} safety remark{warnings.length>1?'s':''} on record</div>
+                        <ul>{warnings.map(w => (
+                          <li key={w.id}><span className="warn-plat tnum">{pById[w.platform_id]?.code}</span>
+                            <span className="warn-date tnum">{fmtDate(w.deboarded_at||w.boarded_at)}</span>
+                            <span className="warn-text">{w.remark}</span></li>
+                        ))}</ul>
+                        <button className="hist-toggle" onClick={()=>setHistFor(histFor===o.id?null:o.id)}>
+                          {histFor===o.id?'Hide full history ▴':'View full history ▾'}</button>
+                      </div>
+                    )}
+
+                    {warnings.length===0 && opLogs.length > 0 && (
                       <button className="hist-toggle" onClick={()=>setHistFor(histFor===o.id?null:o.id)}>
                         {histFor===o.id ? 'Hide history ▴' : `History · ${opLogs.length} trip${opLogs.length>1?'s':''} ▾`}
                       </button>
@@ -1035,18 +1064,20 @@ function VerifierTab({ operators, logs, platforms }) {
                     {histFor===o.id && (
                       <div className="hist-table">
                         <table className="ledger ledger--compact">
-                          <thead><tr><th>Platform</th><th>Boarded</th><th>Deboarded</th><th className="ta-r">Days</th></tr></thead>
+                          <thead><tr><th>Platform</th><th>Boarded</th><th>Deboarded</th><th className="ta-r">Days</th><th>Remark</th></tr></thead>
                           <tbody>
                             {opLogs.map(l => (
-                              <tr key={l.id} className={!l.deboarded_at?'row-on':''}>
+                              <tr key={l.id} className={l.remark?'row-warn':(!l.deboarded_at?'row-on':'')}>
                                 <td className="tnum">{pById[l.platform_id]?.code||'—'}</td>
                                 <td className="tnum">{fmtDate(l.boarded_at)}</td>
                                 <td className="tnum">{l.deboarded_at?fmtDate(l.deboarded_at):'On board'}</td>
                                 <td className="ta-r tnum days-cell">{tripDays(l.boarded_at,l.deboarded_at)}</td>
+                                <td className="hist-remark">{l.remark ? <span className="warn-inline">⚠ {l.remark}</span> : '—'}</td>
                               </tr>))}
                             <tr className="hist-total">
                               <td colSpan={3}>Total days across all trips</td>
                               <td className="ta-r tnum days-cell">{opLogs.reduce((s,l)=>s+tripDays(l.boarded_at,l.deboarded_at),0)}</td>
+                              <td></td>
                             </tr>
                           </tbody>
                         </table>
