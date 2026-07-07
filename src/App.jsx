@@ -25,6 +25,7 @@ const DESIGS = [
   { code: 'CT',  label: 'Crane Technician',  team: 'maintenance' },
   { code: 'SUP', label: 'Supervisor',        team: 'maintenance' },
 ]
+const DNF_DESIGS = [...DESIGS, { code: 'UNK', label: 'Unknown', team: 'operation' }]
 const teamOf = (desig) => (desig === 'CO' ? 'operation' : 'maintenance')
 const desigLabel = (c) => DESIGS.find(d => d.code === c)?.label || c
 
@@ -190,12 +191,27 @@ function NoAssignment() {
 }
 
 /* ============================================================ TEAM STAT BLOCK */
+const OVERSTAY = 28, CRITICAL = 35
 function teamStats(openLogs, operators, team) {
   const opById = Object.fromEntries(operators.map(o => [o.id, o]))
   const items = openLogs.filter(l => teamOf(opById[l.operator_id]?.designation) === team)
   const count = items.length
   const max = items.reduce((m,l)=>Math.max(m, tripDays(l.boarded_at,null)),0)
-  return { count, max }
+  const over = items.filter(l=>tripDays(l.boarded_at,null)>OVERSTAY).length
+  const crit = items.filter(l=>tripDays(l.boarded_at,null)>CRITICAL).length
+  return { count, max, over, crit }
+}
+/* overstay counts for a full set of open logs */
+function overStats(openLogs) {
+  const over = openLogs.filter(l=>tripDays(l.boarded_at,null)>OVERSTAY).length
+  const crit = openLogs.filter(l=>tripDays(l.boarded_at,null)>CRITICAL).length
+  return { over, crit }
+}
+/* required rest for a person = length of their last completed shift (dynamic) */
+function requiredRest(opLogs) {
+  const closed = opLogs.filter(l => l.deboarded_at)
+    .sort((a,b)=>new Date(b.deboarded_at)-new Date(a.deboarded_at))[0]
+  return closed ? tripDays(closed.boarded_at, closed.deboarded_at) : 0
 }
 /* actual on-board count per designation for a set of open logs */
 function actualByDesig(openLogs, operators) {
@@ -218,26 +234,59 @@ function AdminDashboard({ platforms, operators, logs, onOpen }) {
   const open = logs.filter(l => !l.deboarded_at)
   const opById = Object.fromEntries(operators.map(o => [o.id, o]))
   const [platFilter, setPlatFilter] = useState([])   // empty = all
+  const [tileFilter, setTileFilter] = useState(null)  // 'onboard'|'co'|'maint'|'over'|'crit'|'short'
   const togglePlat = (id) => setPlatFilter(f => f.includes(id) ? f.filter(x=>x!==id) : [...f, id])
-  const shown = platFilter.length ? platforms.filter(p => platFilter.includes(p.id)) : platforms
+  const teamFilterActive = platFilter.length ? platforms.filter(p => platFilter.includes(p.id)) : platforms
 
-  // fleet totals across SHOWN platforms
-  const shownIds = new Set(shown.map(p=>p.id))
-  const openShown = open.filter(l => shownIds.has(l.platform_id))
-  const totReq = shown.reduce((s,p)=>s+(p.required_co||0)+(p.required_ct||0)+(p.required_sup||0),0)
-  const totAct = openShown.length
+  // when a tile is active, auto-narrow platform cards to those matching the metric
+  const matchTile = (p) => {
+    const oOpen = open.filter(l => l.platform_id === p.id)
+    if (!tileFilter) return true
+    if (tileFilter==='onboard') return oOpen.length>0
+    if (tileFilter==='co') return oOpen.some(l=>opById[l.operator_id]?.designation==='CO')
+    if (tileFilter==='maint') return oOpen.some(l=>teamOf(opById[l.operator_id]?.designation)==='maintenance')
+    if (tileFilter==='over') return oOpen.some(l=>tripDays(l.boarded_at,null)>OVERSTAY)
+    if (tileFilter==='crit') return oOpen.some(l=>tripDays(l.boarded_at,null)>CRITICAL)
+    if (tileFilter==='short') return rasFor(p, oOpen, operators).tShort>0
+    return true
+  }
+  const shown = teamFilterActive.filter(matchTile)
+
+  // fleet totals across platform-filtered set (tiles reflect platform filter, not tile filter)
+  const base = teamFilterActive
+  const baseIds = new Set(base.map(p=>p.id))
+  const openBase = open.filter(l => baseIds.has(l.platform_id))
+  const totReq = base.reduce((s,p)=>s+(p.required_co||0)+(p.required_ct||0)+(p.required_sup||0),0)
+  const totAct = openBase.length
   const totShort = Math.max(0, totReq-totAct)
-  const maxDays = openShown.reduce((m,l)=>Math.max(m,tripDays(l.boarded_at,null)),0)
-  const overstays = openShown.filter(l=>tripDays(l.boarded_at,null)>28).length
+  const os = overStats(openBase)
+  const coCount = openBase.filter(l=>opById[l.operator_id]?.designation==='CO').length
+  const maintCount = openBase.filter(l=>teamOf(opById[l.operator_id]?.designation)==='maintenance').length
+
+  const Tile = ({ id, label, value, tone, unit, hint }) => (
+    <button className={`tile tile--${tone}${tileFilter===id?' is-on':''}`}
+      onClick={()=>setTileFilter(tileFilter===id?null:id)}>
+      <div className="tile-val tnum">{value}{unit && <span className="tile-unit">{unit}</span>}</div>
+      <div className="tile-lbl">{label}{hint && <span className="tile-hint"> · {hint}</span>}</div>
+    </button>
+  )
 
   return (
     <div className="stack">
-      <div className="tally tally--4">
+      <div className="tally tally--3">
         <TallyCard label="Required (contract)" value={totReq} tone="teal" />
         <TallyCard label="Actual on board" value={totAct} tone="green" />
         <TallyCard label="Shortage" value={totShort} tone={totShort>0?'red':'green'} />
-        <TallyCard label="Max days on board" value={maxDays} unit="days" tone={maxDays>28?'red':'amber'}
-          hint={overstays>0?`${overstays} over 28d`:undefined} />
+      </div>
+
+      {/* interactive filter tiles */}
+      <div className="tile-row">
+        <Tile id="onboard" label="Total on board" value={totAct} tone="amber" />
+        <Tile id="co" label="Crane Operator" value={coCount} tone="amber" />
+        <Tile id="maint" label="Crane Maintenance" value={maintCount} tone="teal" />
+        <Tile id="over" label="Overstayed" value={os.over} tone={os.over>0?'red':'green'} hint=">28d" />
+        <Tile id="crit" label="Critically overstayed" value={os.crit} tone={os.crit>0?'red':'green'} hint=">35d" />
+        <Tile id="short" label="Undermanned platforms" value={base.filter(p=>rasFor(p,open.filter(l=>l.platform_id===p.id),operators).tShort>0).length} tone={totShort>0?'red':'green'} />
       </div>
 
       {/* platform filter */}
@@ -249,13 +298,18 @@ function AdminDashboard({ platforms, operators, logs, onOpen }) {
         ))}
       </div>
 
-      <div className="section-head">Platform breakdown <span className="muted">— click a card to open its sheet</span></div>
+      <div className="section-head">
+        Platform breakdown
+        <span className="muted"> — {tileFilter ? `filtered by "${tileFilter}" · click tile again to clear` : 'click a card to open its sheet'}</span>
+      </div>
       <div className="grid-platforms">
-        {shown.map(p => {
+        {shown.length===0 ? <div className="empty pad">No platforms match this filter.</div> :
+        shown.map(p => {
           const oOpen = open.filter(l => l.platform_id === p.id)
           const ras = rasFor(p, oOpen, operators)
           const mx = oOpen.reduce((m,l)=>Math.max(m,tripDays(l.boarded_at,null)),0)
-          const over = oOpen.some(l=>tripDays(l.boarded_at,null)>28)
+          const over = oOpen.some(l=>tripDays(l.boarded_at,null)>OVERSTAY)
+          const crit = oOpen.some(l=>tripDays(l.boarded_at,null)>CRITICAL)
           return (
             <button className={`platform-card platform-card--btn${ras.tShort>0?' platform-card--short':''}`}
               key={p.id} onClick={() => onOpen(p.id)}>
@@ -274,7 +328,7 @@ function AdminDashboard({ platforms, operators, logs, onOpen }) {
                 <span className="pc-pill pc-pill--amber">CO {ras.act.CO}/{ras.req.CO}</span>
                 <span className="pc-pill pc-pill--teal">CT {ras.act.CT}/{ras.req.CT}</span>
                 <span className="pc-pill pc-pill--teal">SUP {ras.act.SUP}/{ras.req.SUP}</span>
-                <span className={over?'pc-pill pc-pill--red':'pc-pill pc-pill--muted'}>max {mx}d</span>
+                <span className={crit?'pc-pill pc-pill--red':over?'pc-pill pc-pill--amber':'pc-pill pc-pill--muted'}>max {mx}d</span>
               </div>
               <div className="pc-open">Open sheet →</div>
             </button>
@@ -466,11 +520,15 @@ function TeamBlock({ title, tone, s, onClick, sub }) {
   return (
     <div className={`team-block team-block--${tone}`}>
       <div className="team-head">{title}{sub && <span className="team-sub">{sub}</span>}</div>
-      <div className="team-stats team-stats--2">
+      <div className="team-stats team-stats--4">
         <button className="team-stat team-stat--btn" onClick={onClick}>
-          <span className="ts-val tnum">{s.count}</span><span className="ts-lbl">on board now</span></button>
-        <div className="team-stat"><span className={s.max>28?'ts-val tnum ts-val--red':'ts-val tnum'}>{s.max}</span>
-          <span className="ts-lbl">max days{s.max>28?' · over 28!':''}</span></div>
+          <span className="ts-val tnum">{s.count}</span><span className="ts-lbl">on board</span></button>
+        <div className="team-stat"><span className={s.max>CRITICAL?'ts-val tnum ts-val--red':s.max>OVERSTAY?'ts-val tnum ts-val--amber':'ts-val tnum'}>{s.max}</span>
+          <span className="ts-lbl">max days</span></div>
+        <div className="team-stat"><span className={s.over>0?'ts-val tnum ts-val--amber':'ts-val tnum'}>{s.over}</span>
+          <span className="ts-lbl">overstay &gt;28</span></div>
+        <div className="team-stat"><span className={s.crit>0?'ts-val tnum ts-val--red':'ts-val tnum'}>{s.crit}</span>
+          <span className="ts-lbl">critical &gt;35</span></div>
       </div>
     </div>
   )
@@ -568,7 +626,7 @@ function BoardModal({ platform, operators, logs, onClose, onBoard, onBoardDNF })
           <label className="field"><span>Designation</span>
             <select value={dnfDesig} onChange={e=>setDnfDesig(e.target.value)}>
               <option value="">Select…</option>
-              {DESIGS.map(d=><option key={d.code} value={d.code}>{d.code} · {d.label}</option>)}</select></label>
+              {DNF_DESIGS.map(d=><option key={d.code} value={d.code}>{d.code} · {d.label}</option>)}</select></label>
         </>}
 
         <label className="field field--inline"><span>Boarding date</span>
@@ -642,9 +700,11 @@ function PersonnelTab({ operators, logs, reload, isAdmin, platforms }) {
   const [emp, setEmp] = useState(''), [name, setName] = useState('')
   const [desig, setDesig] = useState(''), [ned, setNed] = useState(''), [phone, setPhone] = useState('')
   const [busy, setBusy] = useState(false), [err, setErr] = useState('')
-  const [q, setQ] = useState(''), [teamF, setTeamF] = useState('all')
+  const [q, setQ] = useState(''), [teamF, setTeamF] = useState('all'), [desigF, setDesigF] = useState('all')
+  const [statusF, setStatusF] = useState('all')  // all | onboard | ashore
   const [importMsg, setImportMsg] = useState('')
   const [editDnf, setEditDnf] = useState(null)
+  const [editOp, setEditOp] = useState(null)
   const onboardIds = new Set(logs.filter(l => !l.deboarded_at).map(l => l.operator_id))
   const pById = Object.fromEntries((platforms||[]).map(p => [p.id, p]))
 
@@ -693,11 +753,21 @@ function PersonnelTab({ operators, logs, reload, isAdmin, platforms }) {
     downloadImportTemplate()
   }
 
+  const del = async (o) => {
+    if (onboardIds.has(o.id)) { alert('Deboard this person before deleting.'); return }
+    if (!confirm(`Delete ${o.full_name} (NED ${o.ned_pass_no}) from the master roster? This cannot be undone.`)) return
+    const { error } = await supabase.from('operators').delete().eq('id', o.id)
+    if (error) alert(error.message.toLowerCase().includes('foreign') ? 'This person has boarding history and cannot be deleted. Deboard/retire instead.' : error.message)
+    reload()
+  }
+
   const shown = operators
     .filter(o => teamF==='all' || teamOf(o.designation)===teamF)
+    .filter(o => desigF==='all' || o.designation===desigF)
+    .filter(o => statusF==='all' || (statusF==='onboard' ? onboardIds.has(o.id) : !onboardIds.has(o.id)))
     .filter(o => !q.trim() || `${o.full_name} ${o.emp_code||''} ${o.ned_pass_no||''}`.toLowerCase().includes(q.trim().toLowerCase()))
   const co  = shown.filter(o => o.designation==='CO')
-  const main = shown.filter(o => o.designation==='CT' || o.designation==='SUP')
+  const main = shown.filter(o => o.designation==='CT' || o.designation==='SUP' || o.designation==='UNK')
 
   const Rows = ({ items }) => items.map(o => (
     <tr key={o.id}>
@@ -707,6 +777,10 @@ function PersonnelTab({ operators, logs, reload, isAdmin, platforms }) {
       <td className="tnum muted">{o.ned_pass_no||'—'}</td>
       <td className="muted">{o.phone||'—'}</td>
       <td>{onboardIds.has(o.id)?<span className="status-tag status-tag--on">On Board</span>:<span className="status-tag">Deboarded</span>}</td>
+      {isAdmin && <td><div className="roster-actions">
+        <button className="btn--icon" onClick={()=>setEditOp(o)}>Edit</button>
+        <button className="btn--icon btn--icon-danger" onClick={()=>del(o)}>Delete</button>
+      </div></td>}
     </tr>
   ))
 
@@ -780,30 +854,79 @@ function PersonnelTab({ operators, logs, reload, isAdmin, platforms }) {
       {/* Roster */}
       <div className="col">
         <div className="col-head-row">
-          <div className="col-head">Roster · {operators.length}</div>
-          <div className="roster-tools">
-            <div className="seg">
-              {[['all','All'],['operation','Operator'],['maintenance','Maintenance']].map(([v,l]) => (
-                <button key={v} className={teamF===v?'seg-btn is-on':'seg-btn'} onClick={()=>setTeamF(v)}>{l}</button>))}
-            </div>
-            <input className="search search--sm" placeholder="Search…" value={q} onChange={e=>setQ(e.target.value)} />
+          <div className="col-head">Roster · {shown.length}{shown.length!==operators.length?` of ${operators.length}`:''}</div>
+          <input className="search search--sm" placeholder="Search name / code / NED…" value={q} onChange={e=>setQ(e.target.value)} />
+        </div>
+        <div className="roster-filters">
+          <div className="seg">
+            {[['all','All roles'],['CO','CO'],['CT','CT'],['SUP','SUP'],['UNK','UNK']].map(([v,l]) => (
+              <button key={v} className={desigF===v?'seg-btn is-on':'seg-btn'}
+                onClick={()=>{setDesigF(v); setTeamF('all')}}>{l}</button>))}
+          </div>
+          <div className="seg">
+            {[['all','All'],['onboard','On board'],['ashore','Ashore']].map(([v,l]) => (
+              <button key={v} className={statusF===v?'seg-btn is-on':'seg-btn'} onClick={()=>setStatusF(v)}>{l}</button>))}
           </div>
         </div>
-        {(teamF==='all'||teamF==='operation') && (<>
-          <div className="team-band">Crane Operator</div>
+        {(desigF==='all'||desigF==='CO') && (<>
+          <div className="team-band">Crane Operator · {co.length}</div>
           <div className="table-wrap"><table className="ledger">
-            <thead><tr><th>Name</th><th>Desig</th><th>Code</th><th>NED</th><th>Phone</th><th>Status</th></tr></thead>
-            <tbody>{co.length?<Rows items={co} />:<tr><td colSpan={6} className="empty pad">No operators.</td></tr>}</tbody>
+            <thead><tr><th>Name</th><th>Desig</th><th>Code</th><th>NED</th><th>Phone</th><th>Status</th>{isAdmin&&<th></th>}</tr></thead>
+            <tbody>{co.length?<Rows items={co} />:<tr><td colSpan={isAdmin?7:6} className="empty pad">No operators.</td></tr>}</tbody>
           </table></div></>)}
-        {(teamF==='all'||teamF==='maintenance') && (<>
-          <div className="team-band team-band--teal">Crane Maintenance</div>
+        {(desigF==='all'||desigF==='CT'||desigF==='SUP'||desigF==='UNK') && (<>
+          <div className="team-band team-band--teal">Crane Maintenance · {main.length}</div>
           <div className="table-wrap"><table className="ledger">
-            <thead><tr><th>Name</th><th>Desig</th><th>Code</th><th>NED</th><th>Phone</th><th>Status</th></tr></thead>
-            <tbody>{main.length?<Rows items={main} />:<tr><td colSpan={6} className="empty pad">No maintenance personnel.</td></tr>}</tbody>
+            <thead><tr><th>Name</th><th>Desig</th><th>Code</th><th>NED</th><th>Phone</th><th>Status</th>{isAdmin&&<th></th>}</tr></thead>
+            <tbody>{main.length?<Rows items={main} />:<tr><td colSpan={isAdmin?7:6} className="empty pad">No maintenance personnel.</td></tr>}</tbody>
           </table></div></>)}
       </div>
 
       {editDnf && <DnfApproveModal op={editDnf} onClose={()=>setEditDnf(null)} reload={reload} />}
+      {editOp && <EditOpModal op={editOp} onClose={()=>setEditOp(null)} reload={reload} />}
+    </div>
+  )
+}
+
+/* ---------- Edit operator modal (admin) ---------- */
+function EditOpModal({ op, onClose, reload }) {
+  const [name, setName] = useState(op.full_name||'')
+  const [ned, setNed] = useState(op.ned_pass_no||'')
+  const [desig, setDesig] = useState(op.designation||'CO')
+  const [emp, setEmp] = useState(op.emp_code||''), [phone, setPhone] = useState(op.phone||'')
+  const [busy, setBusy] = useState(false), [err, setErr] = useState('')
+  const save = async () => {
+    setErr(''); if (!name.trim()||!ned.trim()) { setErr('Name and NED are required.'); return }
+    setBusy(true)
+    const { error } = await supabase.from('operators').update({
+      full_name: name.trim(), ned_pass_no: ned.trim(), designation: desig,
+      emp_code: emp.trim()||null, phone: phone.trim()||null }).eq('id', op.id)
+    setBusy(false)
+    if (error) { setErr(error.message.toLowerCase().includes('ned')?'This NED already exists on another person.':error.message); return }
+    onClose(); reload()
+  }
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <div className="modal-head"><div><div className="eyebrow">Edit personnel</div><h3>{op.full_name}</h3></div>
+          <button className="x" onClick={onClose}>×</button></div>
+        <div className="two-fields">
+          <label className="field"><span>Full name</span><input value={name} onChange={e=>setName(e.target.value)} /></label>
+          <label className="field"><span>NED pass</span><input value={ned} onChange={e=>setNed(e.target.value)} /></label>
+        </div>
+        <div className="two-fields">
+          <label className="field"><span>Designation</span>
+            <select value={desig} onChange={e=>setDesig(e.target.value)}>
+              {DNF_DESIGS.map(d=><option key={d.code} value={d.code}>{d.code} · {d.label}</option>)}</select></label>
+          <label className="field"><span>Emp code</span><input value={emp} onChange={e=>setEmp(e.target.value)} /></label>
+        </div>
+        <label className="field"><span>Phone</span><input value={phone} onChange={e=>setPhone(e.target.value)} /></label>
+        {err && <div className="err">{err}</div>}
+        <div className="modal-actions">
+          <button className="btn btn--ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn--primary" disabled={busy} onClick={save}>{busy?'Saving…':'Save changes'}</button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -870,14 +993,15 @@ function VerifierTab({ operators, logs, platforms }) {
       const onboardNow = opLogs.find(l => !l.deboarded_at)
       const closed = opLogs.filter(l => l.deboarded_at)
         .sort((a,b) => new Date(b.deboarded_at) - new Date(a.deboarded_at))[0]
-      let state, daysSince = null
+      let state, daysSince = null, restNeeded = 0
       if (onboardNow) state = 'onboard'
       else if (!closed) state = 'never'
       else {
+        restNeeded = tripDays(closed.boarded_at, closed.deboarded_at)  // = last shift length
         daysSince = Math.round((dOnly(new Date()) - dOnly(closed.deboarded_at)) / 86400000)
-        state = daysSince >= MIN_REST_DAYS ? 'eligible' : 'resting'
+        state = daysSince >= restNeeded ? 'eligible' : 'resting'
       }
-      return { o, state, daysSince, onboardNow, closed, opLogs }
+      return { o, state, daysSince, restNeeded, onboardNow, closed, opLogs }
     })
 
   return (
@@ -885,7 +1009,7 @@ function VerifierTab({ operators, logs, platforms }) {
       <div className="col">
         <div className="col-head">Reboarding eligibility check</div>
         <p className="muted small" style={{marginTop:'-8px', marginBottom:'14px'}}>
-          Minimum {MIN_REST_DAYS} days rest required after deboarding before a person can be reboarded.
+          Rest required after deboarding equals the length of the last completed shift, before a person can be reboarded.
           Search by name or NED pass number.</p>
         <input className="search" autoFocus placeholder="Search name or NED pass number…"
           value={q} onChange={e=>{setQ(e.target.value); setHistFor(null)}} />
@@ -896,7 +1020,7 @@ function VerifierTab({ operators, logs, platforms }) {
           {results.length === 0
             ? <div className="empty pad">No personnel match “{q}”.</div>
             : <div className="verify-list">
-                {results.map(({ o, state, daysSince, onboardNow, closed, opLogs }) => (
+                {results.map(({ o, state, daysSince, restNeeded, onboardNow, closed, opLogs }) => (
                   <div key={o.id} className={`verify-card verify-card--${state} verify-card--stack`}>
                     <div className="verify-row">
                       <div className="verify-main">
@@ -913,11 +1037,11 @@ function VerifierTab({ operators, logs, platforms }) {
                           <div className="verify-badge vb-neutral">No prior trip</div>
                           <div className="verify-note">No boarding record. Eligible to board.</div></>}
                         {state==='eligible' && <>
-                          <div className="verify-badge vb-eligible">Eligible · {daysSince} days rested</div>
-                          <div className="verify-note">Deboarded <b>{pById[closed.platform_id]?.code}</b> on {fmtDate(closed.deboarded_at)} · shift was {tripDays(closed.boarded_at, closed.deboarded_at)} days.</div></>}
+                          <div className="verify-badge vb-eligible">Eligible · {daysSince} / {restNeeded} days rested</div>
+                          <div className="verify-note">Deboarded <b>{pById[closed.platform_id]?.code}</b> on {fmtDate(closed.deboarded_at)} · last shift {restNeeded} days · rest requirement met.</div></>}
                         {state==='resting' && <>
-                          <div className="verify-badge vb-resting">Not yet · {daysSince} / {MIN_REST_DAYS} days</div>
-                          <div className="verify-note">Deboarded <b>{pById[closed.platform_id]?.code}</b> on {fmtDate(closed.deboarded_at)} · shift was {tripDays(closed.boarded_at, closed.deboarded_at)} days · {MIN_REST_DAYS - daysSince} more days needed.</div></>}
+                          <div className="verify-badge vb-resting">Not yet · {daysSince} / {restNeeded} days</div>
+                          <div className="verify-note">Deboarded <b>{pById[closed.platform_id]?.code}</b> on {fmtDate(closed.deboarded_at)} · last shift {restNeeded} days · {restNeeded - daysSince} more days needed.</div></>}
                       </div>
                     </div>
 

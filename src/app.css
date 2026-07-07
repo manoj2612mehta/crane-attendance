@@ -578,3 +578,34 @@ code { background: var(--teal-tint); padding: 2px 6px; border-radius: 5px; font-
   .ras-bar__grid { grid-template-columns: 1fr 1fr; }
   .verify-row { flex-direction: column; align-items: flex-start; }
 }
+
+/* ============ INTERACTIVE TILES ============ */
+.tile-row { display: grid; grid-template-columns: repeat(6,1fr); gap: 12px; }
+.tile { background:#fff; border:1px solid var(--line); border-radius: 12px; padding: 16px 16px;
+  text-align: left; cursor: pointer; transition: box-shadow .15s, transform .08s, border-color .15s; }
+.tile:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
+.tile.is-on { border-color: var(--teal); box-shadow: 0 0 0 2px var(--teal-tint) inset, var(--shadow); }
+.tile-val { font-family:'Space Grotesk'; font-size: 28px; font-weight: 600; line-height: 1; }
+.tile--amber .tile-val { color: var(--amber); }
+.tile--teal .tile-val { color: var(--teal); }
+.tile--green .tile-val { color: var(--green); }
+.tile--red .tile-val { color: var(--red); }
+.tile-unit { font-size: 13px; margin-left: 4px; color: var(--ink-faint); }
+.tile-lbl { font-size: 12px; color: var(--ink-soft); margin-top: 6px; }
+.tile-hint { color: var(--ink-faint); }
+
+.team-stats--4 { grid-template-columns: repeat(4,1fr); }
+.ts-val--amber { color: var(--amber) !important; }
+
+/* UNK designation pill */
+.desig--UNK { background: #ececec; color: #555; }
+
+@media (max-width: 1000px) { .tile-row { grid-template-columns: repeat(3,1fr); } .team-stats--4 { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 620px) { .tile-row { grid-template-columns: 1fr 1fr; } }
+
+/* ============ ROSTER EDIT/DELETE ============ */
+.roster-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.btn--icon { padding: 5px 10px; font-size: 12.5px; border: 1px solid var(--line); background:#fff; color: var(--ink-soft); border-radius: 7px; }
+.btn--icon:hover { border-color: var(--ink-faint); }
+.btn--icon-danger:hover { color: var(--red); border-color: #eccabf; background: #fbeee9; }
+.roster-filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
