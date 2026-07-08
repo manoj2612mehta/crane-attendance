@@ -1037,7 +1037,7 @@ function VerifierTab({ operators, logs, platforms, remarks }) {
           {results.length === 0
             ? <div className="empty pad">No personnel match “{q}”.</div>
             : <div className="verify-list">
-                {results.map(({ o, state, daysSince, restNeeded, onboardNow, closed, opLogs, warnings }) => (
+                {results.map(({ o, state, daysSince, restNeeded, onboardNow, closed, opLogs, warnings, allRem }) => (
                   <div key={o.id} className={`verify-card verify-card--${state} verify-card--stack${warnings.length?' verify-card--warn':''}`}>
                     <div className="verify-row">
                       <div className="verify-main">
