@@ -120,7 +120,7 @@ function ShellApp({ session }) {
       supabase.from('platforms').select('*').order('code'),
       supabase.from('operators').select('*').eq('active', true).order('full_name'),
       supabase.from('boarding_logs').select('*').order('boarded_at', { ascending: false }),
-      supabase.from('platform_incharges').select('platform_id, is_admin, role').eq('user_id', session.user.id),
+      supabase.from('platform_incharges').select('platform_id, is_admin, role, can_manage').eq('user_id', session.user.id),
       supabase.from('remarks').select('*').order('created_at', { ascending: false }),
     ])
     setPlatforms(p||[]); setOperators(o||[]); setLogs(l||[]); setMyInch(inch||[]); setRemarks(rem||[])
@@ -139,6 +139,7 @@ function ShellApp({ session }) {
   const myPlatformIds = myInch.map(r => r.platform_id)
   const myPlatforms = platforms.filter(p => myPlatformIds.includes(p.id))
   const roleByPlatform = Object.fromEntries(myInch.map(r => [r.platform_id, r.role || 'view']))
+  const canManage = myInch.some(r => r.can_manage)
 
   return (
     <div className="app-shell">
@@ -160,7 +161,7 @@ function ShellApp({ session }) {
           onClick={() => setTab('verifier')}>Manifest Checker</button>
         <button className={tab==='personnel'?'tab is-active':'tab'}
           onClick={() => setTab('personnel')}>Crane team {operators.length?`· ${operators.length}`:''}</button>
-        {isAdmin && <button className={tab==='remarks'?'tab is-active':'tab'}
+        {isAdmin && canManage && <button className={tab==='remarks'?'tab is-active':'tab'}
           onClick={() => setTab('remarks')}>Remarks {remarks.filter(r=>r.is_safety).length?`· ${remarks.filter(r=>r.is_safety).length}⚠`:''}</button>}
       </nav>
 
@@ -168,19 +169,20 @@ function ShellApp({ session }) {
         {loading ? <div className="pulse-dot" /> :
           tab === 'verifier'
             ? <VerifierTab operators={operators} logs={logs} platforms={platforms} remarks={remarks} />
-          : tab === 'remarks' && isAdmin
+          : tab === 'remarks' && isAdmin && canManage
             ? <RemarksTab operators={operators} remarks={remarks} logs={logs} platforms={platforms} session={session} reload={load} />
           : tab === 'personnel'
-            ? <PersonnelTab operators={operators} logs={logs} reload={load} isAdmin={isAdmin} platforms={platforms} />
+            ? <PersonnelTab operators={operators} logs={logs} reload={load} isAdmin={isAdmin} canManage={canManage} platforms={platforms} />
           : tab === 'dashboard' && isAdmin
             ? (openPlatform
                 ? <PlatformSheet platform={platforms.find(p=>p.id===openPlatform)} operators={operators}
-                    logs={logs} session={session} canExport readOnly reload={load} onBack={() => setOpenPlatform(null)} />
+                    logs={logs} session={session} canExport reload={load} onBack={() => setOpenPlatform(null)}
+                    readOnly={roleByPlatform[openPlatform]!=='icm'} remarks={remarks} />
                 : <AdminDashboard platforms={platforms} operators={operators} logs={logs} onOpen={setOpenPlatform} />)
           : (myPlatforms.length === 0
               ? <NoAssignment />
               : <MyPlatformsView myPlatforms={myPlatforms} operators={operators} logs={logs}
-                  session={session} reload={load} roleByPlatform={roleByPlatform} />)
+                  session={session} reload={load} roleByPlatform={roleByPlatform} remarks={remarks} />)
         }
       </main>
 
@@ -709,7 +711,7 @@ function ExportModal({ platform, operators, logs, onClose }) {
 }
 
 /* ============================================================ PERSONNEL TAB */
-function PersonnelTab({ operators, logs, reload, isAdmin, platforms }) {
+function PersonnelTab({ operators, logs, reload, isAdmin, canManage, platforms }) {
   const [emp, setEmp] = useState(''), [name, setName] = useState('')
   const [desig, setDesig] = useState(''), [ned, setNed] = useState(''), [phone, setPhone] = useState('')
   const [busy, setBusy] = useState(false), [err, setErr] = useState('')
@@ -790,7 +792,7 @@ function PersonnelTab({ operators, logs, reload, isAdmin, platforms }) {
       <td className="tnum muted">{o.ned_pass_no||'—'}</td>
       <td className="muted">{o.phone||'—'}</td>
       <td>{onboardIds.has(o.id)?<span className="status-tag status-tag--on">On Board</span>:<span className="status-tag">Deboarded</span>}</td>
-      {isAdmin && <td><div className="roster-actions">
+      {canManage && <td><div className="roster-actions">
         <button className="btn--icon" onClick={()=>setEditOp(o)}>Edit</button>
         <button className="btn--icon btn--icon-danger" onClick={()=>del(o)}>Delete</button>
       </div></td>}
@@ -800,7 +802,7 @@ function PersonnelTab({ operators, logs, reload, isAdmin, platforms }) {
   return (
     <div className="stack">
       {/* DNF review — admin only */}
-      {isAdmin && dnfPeople.length > 0 && (
+      {canManage && dnfPeople.length > 0 && (
         <div className="col col--flag">
           <div className="col-head col-head--flag">DNF review · {dnfPeople.length} pending approval</div>
           <p className="muted small" style={{marginTop:'-8px',marginBottom:'14px'}}>
@@ -828,7 +830,7 @@ function PersonnelTab({ operators, logs, reload, isAdmin, platforms }) {
       )}
 
       {/* Add + import — admin only */}
-      {isAdmin ? (
+      {canManage ? (
         <div className="col">
           <div className="col-head-row">
             <div className="col-head">Add crane team personnel</div>
@@ -884,14 +886,14 @@ function PersonnelTab({ operators, logs, reload, isAdmin, platforms }) {
         {(desigF==='all'||desigF==='CO') && (<>
           <div className="team-band">Crane Operator · {co.length}</div>
           <div className="table-wrap"><table className="ledger">
-            <thead><tr><th>Name</th><th>Desig</th><th>Code</th><th>NED</th><th>Phone</th><th>Status</th>{isAdmin&&<th></th>}</tr></thead>
-            <tbody>{co.length?<Rows items={co} />:<tr><td colSpan={isAdmin?7:6} className="empty pad">No operators.</td></tr>}</tbody>
+            <thead><tr><th>Name</th><th>Desig</th><th>Code</th><th>NED</th><th>Phone</th><th>Status</th>{canManage&&<th></th>}</tr></thead>
+            <tbody>{co.length?<Rows items={co} />:<tr><td colSpan={canManage?7:6} className="empty pad">No operators.</td></tr>}</tbody>
           </table></div></>)}
         {(desigF==='all'||desigF==='CT'||desigF==='SUP'||desigF==='UNK') && (<>
           <div className="team-band team-band--teal">Crane Maintenance · {main.length}</div>
           <div className="table-wrap"><table className="ledger">
-            <thead><tr><th>Name</th><th>Desig</th><th>Code</th><th>NED</th><th>Phone</th><th>Status</th>{isAdmin&&<th></th>}</tr></thead>
-            <tbody>{main.length?<Rows items={main} />:<tr><td colSpan={isAdmin?7:6} className="empty pad">No maintenance personnel.</td></tr>}</tbody>
+            <thead><tr><th>Name</th><th>Desig</th><th>Code</th><th>NED</th><th>Phone</th><th>Status</th>{canManage&&<th></th>}</tr></thead>
+            <tbody>{main.length?<Rows items={main} />:<tr><td colSpan={canManage?7:6} className="empty pad">No maintenance personnel.</td></tr>}</tbody>
           </table></div></>)}
       </div>
 
